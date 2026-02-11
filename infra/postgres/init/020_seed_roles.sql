@@ -1,0 +1,5 @@
+INSERT INTO roles(name) VALUES
+  ('ADMIN'),
+  ('USER'),
+  ('AUDITOR')
+ON CONFLICT (name) DO NOTHING;
