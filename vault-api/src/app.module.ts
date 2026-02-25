@@ -3,14 +3,22 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import databaseConfig from './config/database.config';
+import storageConfig from './config/storage.config';
+import { documentsConfig } from './config/documents.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { TenantsModule } from './modules/tenants/tenants.module';
+import { VaultsModule } from './modules/vaults/vaults.module';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { AuditInterceptor } from './common/interceptors/audit.interceptor';
+import { AuditModule } from './modules/audit/audit.module';
+import { DocumentsModule } from './modules/documents/documents.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig],
+      load: [databaseConfig, storageConfig, documentsConfig], // carga también la config de storage
     }),
 
     TypeOrmModule.forRootAsync({
@@ -21,6 +29,11 @@ import { UsersModule } from './modules/users/users.module';
     }),
     UsersModule,
     AuthModule,
+    TenantsModule,
+    VaultsModule,
+    AuditModule,
+    DocumentsModule,
   ],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
 })
 export class AppModule {}

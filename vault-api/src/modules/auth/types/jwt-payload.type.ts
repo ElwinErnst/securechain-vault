@@ -1,7 +1,9 @@
-import { RoleName } from '../../../database/entities/role.entity';
+import { RoleName } from 'src/database/entities/role.entity';
 
-export interface JwtPayload {
+export type JwtPayload = {
   sub: string;
   email: string;
   roles: RoleName[];
-}
+  iat?: number;
+  exp?: number;
+};

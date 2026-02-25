@@ -1,0 +1,208 @@
+{
+  "info": {
+    "name": "SecureChain Vault API (PRO)",
+    "_postman_id": "9b2fd1a1-7d1b-4a9e-9c2d-123456789abc",
+    "description": "Auth + Vaults + Documents. Auto-saves token, vaultId, documentId.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "token", "value": "" },
+    { "key": "tenantId", "value": "" },
+    { "key": "vaultId", "value": "" },
+    { "key": "documentId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth - Login (sets token)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Login OK', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "",
+              "const json = pm.response.json();",
+              "if (json && json.accessToken) {",
+              "  pm.collectionVariables.set('token', json.accessToken);",
+              "}",
+              "",
+              "// Si tu login devuelve tenantId (opcional), lo guardamos:",
+              "if (json && json.tenantId) {",
+              "  pm.collectionVariables.set('tenantId', json.tenantId);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@vault.local\",\n  \"password\": \"password123\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "Tenants - My tenant (optional) (sets tenantId)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.response.code >= 200 && pm.response.code < 300) {",
+              "  const json = pm.response.json();",
+              "  // Ajustá esto si tu endpoint devuelve otra forma:",
+              "  // ejemplo: { id: 'uuid', ... } o { tenant: { id } }",
+              "  const id = (json && json.id) || (json && json.tenant && json.tenant.id) || null;",
+              "  if (id) pm.collectionVariables.set('tenantId', id);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/tenants/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["tenants", "me"]
+        }
+      }
+    },
+    {
+      "name": "Vault - Create (sets vaultId)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Vault created', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "const json = pm.response.json();",
+              "if (json && json.id) pm.collectionVariables.set('vaultId', json.id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "x-tenant-id", "value": "{{tenantId}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Postman Vault\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/vaults",
+          "host": ["{{baseUrl}}"],
+          "path": ["vaults"]
+        }
+      }
+    },
+    {
+      "name": "Documents - Upload (query) (sets documentId)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Upload created', function () {",
+              "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+              "});",
+              "const json = pm.response.json();",
+              "if (json && json.id) pm.collectionVariables.set('documentId', json.id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "x-tenant-id", "value": "{{tenantId}}" }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": "" }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/documents?vaultId={{vaultId}}&name=Contrato",
+          "host": ["{{baseUrl}}"],
+          "path": ["documents"],
+          "query": [
+            { "key": "vaultId", "value": "{{vaultId}}" },
+            { "key": "name", "value": "Contrato" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Documents - List (query vaultId)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "x-tenant-id", "value": "{{tenantId}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/documents?vaultId={{vaultId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["documents"],
+          "query": [{ "key": "vaultId", "value": "{{vaultId}}" }]
+        }
+      }
+    },
+    {
+      "name": "Documents - Download (uses documentId)",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "x-tenant-id", "value": "{{tenantId}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/documents/{{documentId}}/download",
+          "host": ["{{baseUrl}}"],
+          "path": ["documents", "{{documentId}}", "download"]
+        }
+      }
+    },
+    {
+      "name": "Documents - Delete (uses documentId)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{token}}" },
+          { "key": "x-tenant-id", "value": "{{tenantId}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/documents/{{documentId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["documents", "{{documentId}}"]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "eslint.enable": true,
+  "eslint.experimental.useFlatConfig": true,
+  "eslint.run": "onSave",
+  "eslint.format.enable": true
+}</content>
+<parameter name="filePath">/Users/sasha/Proyects/sentinel-suite/securechain-vault/vault-api/.vscode/settings.json
