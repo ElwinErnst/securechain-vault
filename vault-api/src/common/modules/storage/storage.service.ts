@@ -7,14 +7,15 @@ import {
   DeleteObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
+  type GetObjectCommandOutput,
 } from '@aws-sdk/client-s3';
 import { sdkStreamMixin } from '@aws-sdk/util-stream-node';
-import { Readable } from 'stream';
+import { Readable, PassThrough } from 'stream';
 
 type StorageSaveBufferOpts = {
   tenantId: string;
   vaultId: string;
-  filename: string; // ya sanitizado
+  filename: string; // sanitizado
   buffer: Buffer;
   mime: string;
 };
@@ -29,13 +30,9 @@ export class StorageService {
   constructor(private readonly config: ConfigService) {
     const endpointHost =
       this.config.get<string>('MINIO_ENDPOINT') ?? 'localhost';
-
-    const portRaw = this.config.get<string>('MINIO_PORT') ?? '9000';
-    const port = Number(portRaw);
-
+    const port = Number(this.config.get<string>('MINIO_PORT') ?? '9000');
     const accessKeyId =
       this.config.get<string>('MINIO_ACCESS_KEY') ?? 'minioadmin';
-
     const secretAccessKey =
       this.config.get<string>('MINIO_SECRET_KEY') ?? 'minioadmin';
 
@@ -64,6 +61,10 @@ export class StorageService {
     }
   }
 
+  buildStorageKey(tenantId: string, vaultId: string, filename: string): string {
+    return `${tenantId}/${vaultId}/${filename}`;
+  }
+
   async saveBuffer(
     opts: StorageSaveBufferOpts,
   ): Promise<{ storageKey: string }> {
@@ -73,12 +74,11 @@ export class StorageService {
       opts.filename,
     );
 
-    // Buffer es Uint8Array en Node, no hace falta castearlo
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: storageKey,
-        Body: opts.buffer,
+        Body: opts.buffer, // Buffer extiende Uint8Array en Node
         ContentType: opts.mime,
       }),
     );
@@ -86,8 +86,43 @@ export class StorageService {
     return { storageKey };
   }
 
-  async getBuffer(storageKey: string): Promise<Buffer> {
-    const out = await this.s3.send(
+  /**
+   * Para streaming uploads (encryption pipeline).
+   * Devuelve:
+   * - writable: donde escribís bytes
+   * - done: promise que resuelve cuando MinIO termina el upload
+   */
+  createWritableStream(
+    storageKey: string,
+    mime: string,
+    contentLength?: number,
+  ): { writable: PassThrough; done: Promise<unknown> } {
+    const pass = new PassThrough();
+
+    // sdkStreamMixin mutates the stream in-place so that the AWS SDK
+    // can correctly detect and manage it during uploads. We *must*
+    // pass the same object back to the caller so that writing to it
+    // actually feeds the request body that the SDK sees.
+    sdkStreamMixin(pass);
+
+    const commandParams = {
+      Bucket: this.bucket,
+      Key: storageKey,
+      Body: pass,
+      ContentType: mime,
+      ...(typeof contentLength === 'number' && {
+        ContentLength: contentLength,
+      }),
+      ChecksumAlgorithm: undefined,
+    };
+
+    const done = this.s3.send(new PutObjectCommand(commandParams));
+
+    return { writable: pass, done };
+  }
+
+  async getStream(storageKey: string): Promise<Readable> {
+    const out: GetObjectCommandOutput = await this.s3.send(
       new GetObjectCommand({
         Bucket: this.bucket,
         Key: storageKey,
@@ -97,21 +132,25 @@ export class StorageService {
     const body = out.Body;
     if (!body) throw new Error('Object body is empty');
 
-    // En Node, Body suele ser Readable.
-    // sdkStreamMixin lo “enriquece” con transformToByteArray() tipado.
-    if (body instanceof Readable) {
-      const mixed = sdkStreamMixin(body);
-      const bytes = await mixed.transformToByteArray();
-      return Buffer.from(bytes);
+    if (body instanceof Readable) return body;
+
+    if (body instanceof Uint8Array) return Readable.from([body]);
+
+    const maybe = body as unknown as {
+      transformToByteArray?: () => Promise<Uint8Array>;
+    };
+
+    if (typeof maybe.transformToByteArray === 'function') {
+      const bytes = await maybe.transformToByteArray();
+      return Readable.from([bytes]);
     }
 
-    // Por si algún runtime te devuelve bytes directos:
-    if (body instanceof Uint8Array) {
-      return Buffer.from(body);
-    }
-
-    // Si cae acá, mejor fallar explícito (evita unsafe casts)
     throw new Error('Unsupported body type returned by S3 client');
+  }
+
+  async getBuffer(storageKey: string): Promise<Buffer> {
+    const stream = await this.getStream(storageKey);
+    return this.streamToBuffer(stream);
   }
 
   async delete(storageKey: string): Promise<void> {
@@ -123,7 +162,19 @@ export class StorageService {
     );
   }
 
-  private buildStorageKey(tenantId: string, vaultId: string, filename: string) {
-    return `${tenantId}/${vaultId}/${filename}`;
+  private async streamToBuffer(stream: Readable): Promise<Buffer> {
+    const chunks: Uint8Array[] = [];
+
+    for await (const chunk of stream) {
+      if (Buffer.isBuffer(chunk)) {
+        chunks.push(chunk);
+      } else if (chunk instanceof Uint8Array) {
+        chunks.push(chunk);
+      } else {
+        chunks.push(Buffer.from(String(chunk)));
+      }
+    }
+
+    return Buffer.concat(chunks);
   }
 }

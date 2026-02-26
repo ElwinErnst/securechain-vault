@@ -1,0 +1,202 @@
+// src/modules/anchor/anchor.service.ts
+import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { createHash } from 'crypto';
+import { Repository } from 'typeorm';
+
+import { DocumentEntity } from '../../database/entities/document.entity';
+import { StorageService } from '../../common/modules/storage/storage.service';
+
+/**
+ * Resultado “mínimo” del anclado.
+ * (Después lo podés persistir en DocumentEntity o en una tabla aparte.)
+ */
+export type AnchorResult = {
+  txHash: string;
+  chainId: number;
+  anchoredAt: Date;
+};
+
+export type AnchorPayload = {
+  tenantId: string;
+  vaultId: string;
+  documentId: string;
+  sha256Hex: string;
+};
+
+/**
+ * Puerto para desacoplar la blockchain (ethers, web3, http a otro servicio, etc.).
+ * Importante: SIN any.
+ */
+export interface AnchorClientPort {
+  anchorDocumentHash(payload: AnchorPayload): Promise<AnchorResult>;
+}
+
+/**
+ * Token de inyección para el cliente concreto (EthersAnchorClient, HttpAnchorClient, etc).
+ * En tu AnchorModule registrás un provider con este token.
+ */
+export const ANCHOR_CLIENT = Symbol('ANCHOR_CLIENT');
+
+@Injectable()
+export class AnchorService {
+  private readonly logger = new Logger(AnchorService.name);
+
+  constructor(
+    @InjectRepository(DocumentEntity)
+    private readonly docsRepo: Repository<DocumentEntity>,
+    private readonly storage: StorageService,
+    // Inyectá un provider que implemente AnchorClientPort con el token ANCHOR_CLIENT
+    // (ver nota al final)
+    @Inject(ANCHOR_CLIENT)
+    private readonly anchorClient: AnchorClientPort,
+  ) {}
+
+  /**
+   * Obtiene un documento del tenant (o 404 si no existe).
+   */
+  async getDocOrThrow(
+    tenantId: string,
+    documentId: string,
+  ): Promise<DocumentEntity> {
+    const doc = await this.docsRepo.findOne({
+      where: { id: documentId, tenantId },
+    });
+
+    if (!doc) throw new NotFoundException('Document not found');
+    return doc;
+  }
+
+  /**
+   * Calcula SHA-256 del contenido actual en storage (MinIO).
+   * Devuelve hex lowercase (64 chars).
+   */
+  async computeDocumentSha256Hex(doc: DocumentEntity): Promise<string> {
+    const buf = await this.storage.getBuffer(doc.storageKey);
+    return this.sha256Hex(buf);
+  }
+
+  /**
+   * Ancla el hash del documento a blockchain (vía AnchorClientPort).
+   * NO persiste nada en DB (así compila aunque aún no agregues columnas de "anchor").
+   * Si querés persistir, lo hacemos en el siguiente paso con campos nuevos o tabla `document_anchors`.
+   */
+  async anchorDocumentById(opts: {
+    tenantId: string;
+    documentId: string;
+  }): Promise<{
+    doc: DocumentEntity;
+    payload: AnchorPayload;
+    result: AnchorResult;
+  }> {
+    const doc = await this.getDocOrThrow(opts.tenantId, opts.documentId);
+
+    const sha256Hex = await this.computeDocumentSha256Hex(doc);
+
+    const payload: AnchorPayload = {
+      tenantId: doc.tenantId,
+      vaultId: doc.vaultId,
+      documentId: doc.id,
+      sha256Hex,
+    };
+
+    const result = await this.anchorClient.anchorDocumentHash(payload);
+
+    this.logger.log(
+      `Anchored document ${doc.id} (tenant=${doc.tenantId}) tx=${result.txHash} chainId=${result.chainId}`,
+    );
+
+    return { doc, payload, result };
+  }
+
+  async processPending(): Promise<{ processed: number; failed: number }> {
+    const pendingDocs = await this.docsRepo.find({
+      where: { anchorStatus: 'PENDING' },
+      take: 50,
+    });
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const doc of pendingDocs) {
+      try {
+        await this.anchorDocumentById({
+          tenantId: doc.tenantId,
+          documentId: doc.id,
+        });
+
+        // Si ya tenés columna anchorStatus:
+        doc.anchorStatus = 'ANCHORED';
+        await this.docsRepo.save(doc);
+
+        processed++;
+      } catch (err: unknown) {
+        failed++;
+        this.logger.error(
+          `Failed to anchor doc ${doc.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    return { processed, failed };
+  }
+
+  async verifyDocument(documentId: string): Promise<{
+    status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
+    documentId: string;
+    storedSha256: string;
+    currentSha256: string;
+    anchorTxHash: string | null;
+    anchoredAt: Date | null;
+  }> {
+    const doc = await this.docsRepo.findOne({
+      where: { id: documentId },
+    });
+
+    if (!doc) {
+      throw new NotFoundException('Document not found');
+    }
+
+    const currentSha256 = await this.computeDocumentSha256Hex(doc);
+
+    if (!doc.anchorTxHash || !doc.anchoredAt) {
+      return {
+        status: 'NOT_ANCHORED',
+        documentId: doc.id,
+        storedSha256: doc.sha256PlainHex,
+        currentSha256,
+        anchorTxHash: null,
+        anchoredAt: null,
+      };
+    }
+
+    if (currentSha256 !== doc.sha256PlainHex) {
+      return {
+        status: 'MODIFIED',
+        documentId: doc.id,
+        storedSha256: doc.sha256PlainHex,
+        currentSha256,
+        anchorTxHash: doc.anchorTxHash,
+        anchoredAt: doc.anchoredAt,
+      };
+    }
+
+    return {
+      status: 'VALID',
+      documentId: doc.id,
+      storedSha256: doc.sha256PlainHex,
+      currentSha256,
+      anchorTxHash: doc.anchorTxHash,
+      anchoredAt: doc.anchoredAt,
+    };
+  }
+
+  /**
+   * Helper: hash SHA-256 -> hex.
+   */
+  private sha256Hex(buf: Buffer): string {
+    return createHash('sha256').update(buf).digest('hex');
+  }
+}

@@ -6,7 +6,7 @@ import { TenantMemberEntity } from '../../database/entities/tenant-member.entity
 import { VaultsController } from './vaults.controller';
 import { VaultsService } from './vaults.service';
 import { AuditModule } from '../audit/audit.module';
-import { TenantRbacGuard } from 'src/common/guards/tenant-rbac.guard';
+import { AccessControlModule } from 'src/common/modules/access-control/access-control.module';
 
 @Module({
   imports: [
@@ -14,7 +14,7 @@ import { TenantRbacGuard } from 'src/common/guards/tenant-rbac.guard';
     AuditModule,
   ],
   controllers: [VaultsController],
-  providers: [VaultsService, TenantRbacGuard],
+  providers: [VaultsService, AccessControlModule],
   exports: [VaultsService],
 })
 export class VaultsModule {}

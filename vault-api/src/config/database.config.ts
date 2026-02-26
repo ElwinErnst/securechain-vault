@@ -12,7 +12,8 @@ export default registerAs(
     database: process.env.DB_NAME,
     entities: [__dirname + '/../database/entities/*.{ts,js}'],
     synchronize: process.env.NODE_ENV === 'test',
-    logging: process.env.NODE_ENV !== 'production',
+    // logging: process.env.NODE_ENV !== 'production',
+    logging: false,
     migrations: [__dirname + '/../database/migrations/*.{ts,js}'],
     // opcional:
     // migrationsRun: process.env.NODE_ENV === 'test',

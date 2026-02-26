@@ -33,7 +33,7 @@ const DocumentListSchema = z.array(DocumentItemSchema);
    Binary parser (for downloads)
 --------------------------------
    supertest/superagent .parse expects:
-   (res: superagent.Response, callback: (err: Error | null, body: any) => void) => void
+   (res: superagent.Response, callback: (err: Error | null, body: Buffer) => void) => void
 -------------------------------- */
 
 function binaryParser(

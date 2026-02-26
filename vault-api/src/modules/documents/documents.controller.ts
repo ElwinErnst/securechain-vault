@@ -13,8 +13,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
+import { z } from 'zod';
 import type { Response } from 'express';
-import type { Express } from 'express';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantContextGuard } from '../../common/guards/tenant-context.guard';
@@ -27,10 +27,35 @@ import { TenantMemberRole } from '../../database/entities/tenant-member.entity';
 import { DocumentsService } from './documents.service';
 import { Audit } from '../../common/decorators/audit.decorator';
 
-type UploadQuery = {
-  vaultId?: string;
-  name?: string;
-};
+const UploadQuerySchema = z.object({
+  vaultId: z.string().uuid(),
+  name: z.string().min(1).max(255).optional(),
+});
+
+const ListQuerySchema = z.object({
+  vaultId: z.string().uuid(),
+});
+
+const IdParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
+// Defaults MVP (si no hay config)
+const DEFAULT_MAX_BYTES = 20 * 1024 * 1024;
+const DEFAULT_ALLOWED_MIMES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+] as const;
+
+type AllowedMime = (typeof DEFAULT_ALLOWED_MIMES)[number];
+
+function isAllowedMime(
+  mime: string,
+  allowed: readonly string[],
+): mime is AllowedMime {
+  return allowed.includes(mime);
+}
 
 @Controller()
 @UseGuards(JwtAuthGuard, TenantContextGuard, TenantRbacGuard)
@@ -49,17 +74,16 @@ export class DocumentsController {
   })
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: 20 * 1024 * 1024 },
+      limits: { fileSize: DEFAULT_MAX_BYTES },
       fileFilter: (
         _req: unknown,
         file: Express.Multer.File,
         cb: (error: Error | null, acceptFile: boolean) => void,
       ) => {
-        const allowed = ['application/pdf', 'image/png', 'image/jpeg'];
-        if (!allowed.includes(file.mimetype)) {
+        if (!isAllowedMime(file.mimetype, DEFAULT_ALLOWED_MIMES)) {
           cb(
             new BadRequestException(
-              `Invalid file type: ${file.mimetype}. Allowed: ${allowed.join(', ')}`,
+              `Invalid file type: ${file.mimetype}. Allowed: ${DEFAULT_ALLOWED_MIMES.join(', ')}`,
             ),
             false,
           );
@@ -72,20 +96,22 @@ export class DocumentsController {
   async upload(
     @TenantId() tenantId: string,
     @CurrentUser() user: { id: string },
-    @Query() query: UploadQuery,
-    @UploadedFile() file: Express.Multer.File,
+    @Query() query: unknown,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
+    const parsedQuery = UploadQuerySchema.safeParse(query);
+    if (!parsedQuery.success)
+      throw new BadRequestException('Invalid query (vaultId/name)');
+
+    if (!file) throw new BadRequestException('Missing file');
+
     const maxBytes =
-      this.config.get<number>('documents.maxFileSizeBytes') ?? 20 * 1024 * 1024;
+      this.config.get<number>('documents.maxFileSizeBytes') ??
+      DEFAULT_MAX_BYTES;
 
     const allowed = this.config.get<string[]>('documents.allowedMimeTypes') ?? [
-      'application/pdf',
-      'image/png',
-      'image/jpeg',
+      ...DEFAULT_ALLOWED_MIMES,
     ];
-
-    if (!query.vaultId) throw new BadRequestException('Missing vaultId');
-    if (!file) throw new BadRequestException('Missing file');
 
     if (!allowed.includes(file.mimetype)) {
       throw new BadRequestException(
@@ -102,8 +128,8 @@ export class DocumentsController {
     const doc = await this.docs.upload({
       tenantId,
       userId: user.id,
-      vaultId: query.vaultId,
-      name: query.name,
+      vaultId: parsedQuery.data.vaultId,
+      name: parsedQuery.data.name,
       file: {
         originalname: file.originalname,
         mimetype: file.mimetype,
@@ -127,10 +153,12 @@ export class DocumentsController {
   @Get('/documents')
   @TenantRoles(TenantMemberRole.MEMBER)
   @Audit({ action: 'DOCUMENT_LIST', resourceType: 'document' })
-  async list(@TenantId() tenantId: string, @Query('vaultId') vaultId: string) {
-    if (!vaultId) throw new BadRequestException('Missing vaultId');
+  async list(@TenantId() tenantId: string, @Query() query: unknown) {
+    const parsed = ListQuerySchema.safeParse(query);
+    if (!parsed.success) throw new BadRequestException('Invalid vaultId');
 
-    const items = await this.docs.list(tenantId, vaultId);
+    const items = await this.docs.list(tenantId, parsed.data.vaultId);
+
     return items.map((d) => ({
       id: d.id,
       tenantId: d.tenantId,
@@ -140,6 +168,8 @@ export class DocumentsController {
       mime: d.mime,
       sizeBytes: d.sizeBytes,
       createdAt: d.createdAt.toISOString(),
+      anchorStatus: d.anchorStatus,
+      encAlg: d.encAlg,
     }));
   }
 
@@ -152,18 +182,29 @@ export class DocumentsController {
   })
   async download(
     @TenantId() tenantId: string,
-    @Param('id') id: string,
+    @Param() params: unknown,
     @Res() res: Response,
   ) {
-    const { doc, buffer } = await this.docs.getDownload(tenantId, id);
+    const parsed = IdParamSchema.safeParse(params);
+    if (!parsed.success) throw new BadRequestException('Invalid document id');
+
+    const { doc, stream } = await this.docs.getForDownloadStream(
+      tenantId,
+      parsed.data.id,
+    );
 
     res.setHeader('Content-Type', doc.mime);
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${doc.originalName}"`,
+      `attachment; filename="${encodeURIComponent(doc.originalName)}"`,
     );
-    res.setHeader('Content-Length', String(buffer.byteLength));
-    return res.send(buffer);
+
+    stream.on('error', () => {
+      if (!res.headersSent) res.status(500);
+      res.end();
+    });
+
+    stream.pipe(res);
   }
 
   @Delete('/documents/:id')
@@ -173,8 +214,11 @@ export class DocumentsController {
     resourceType: 'document',
     resourceIdParam: 'id',
   })
-  async remove(@TenantId() tenantId: string, @Param('id') id: string) {
-    await this.docs.remove(tenantId, id);
+  async remove(@TenantId() tenantId: string, @Param() params: unknown) {
+    const parsed = IdParamSchema.safeParse(params);
+    if (!parsed.success) throw new BadRequestException('Invalid document id');
+
+    await this.docs.remove(tenantId, parsed.data.id);
     return { ok: true };
   }
 }
