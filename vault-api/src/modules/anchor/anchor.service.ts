@@ -118,6 +118,8 @@ export class AnchorService {
     let processed = 0;
     let failed = 0;
 
+    const MAX_RETRIES = 5;
+
     for (const doc of pendingDocs) {
       try {
         await this.anchorDocumentById({
@@ -125,18 +127,40 @@ export class AnchorService {
           documentId: doc.id,
         });
 
-        // Si ya tenés columna anchorStatus:
+        // Anclado exitoso
         doc.anchorStatus = 'ANCHORED';
+        doc.anchorRetries = 0;
         await this.docsRepo.save(doc);
 
         processed++;
       } catch (err: unknown) {
-        failed++;
-        this.logger.error(
-          `Failed to anchor doc ${doc.id}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
+        // Incrementar contador de reintentos
+        const currentRetry = doc.anchorRetries ?? 0;
+
+        if (currentRetry < MAX_RETRIES) {
+          // Backoff exponencial: 2^retry segundos
+          const exponentialSeconds = Math.pow(2, currentRetry);
+          doc.anchorRetries = currentRetry + 1;
+          await this.docsRepo.save(doc);
+
+          this.logger.warn(
+            `Failed to anchor doc ${doc.id}, retry ${currentRetry + 1}/${MAX_RETRIES} in ${exponentialSeconds}s. Error: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        } else {
+          // Máximos reintentos alcanzados
+          doc.anchorStatus = 'FAILED';
+          doc.anchorRetries = MAX_RETRIES;
+          await this.docsRepo.save(doc);
+
+          failed++;
+          this.logger.error(
+            `Anchor failed permanently for doc ${doc.id} after ${MAX_RETRIES} retries: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
     }
 
@@ -150,6 +174,7 @@ export class AnchorService {
     currentSha256: string;
     anchorTxHash: string | null;
     anchoredAt: Date | null;
+    reason: string | null;
   }> {
     const doc = await this.docsRepo.findOne({
       where: { id: documentId },
@@ -169,6 +194,10 @@ export class AnchorService {
         currentSha256,
         anchorTxHash: null,
         anchoredAt: null,
+        reason:
+          doc.anchorStatus === 'FAILED'
+            ? `Anchor failed after ${doc.anchorRetries ?? 0} retries`
+            : 'Document pending blockchain anchoring',
       };
     }
 
@@ -180,6 +209,7 @@ export class AnchorService {
         currentSha256,
         anchorTxHash: doc.anchorTxHash,
         anchoredAt: doc.anchoredAt,
+        reason: 'Content hash mismatch - document may have been tampered',
       };
     }
 
@@ -190,6 +220,7 @@ export class AnchorService {
       currentSha256,
       anchorTxHash: doc.anchorTxHash,
       anchoredAt: doc.anchoredAt,
+      reason: null,
     };
   }
 

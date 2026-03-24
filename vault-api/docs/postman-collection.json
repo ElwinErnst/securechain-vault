@@ -1,0 +1,155 @@
+{
+  "info": {
+    "name": "SecureChain Vault API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Basic collection for Vault API (use with local server at http://localhost:3000)"
+  },
+  "item": [
+    {
+      "name": "Auth/Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@vault.local\",\n  \"password\": \"12345678\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:3000/auth/login",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "auth",
+            "login"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Tenants/Me",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "x-tenant-id",
+            "value": "{{tenantId}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:3000/tenants/me"
+        }
+      }
+    },
+    {
+      "name": "Documents/Upload",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "x-tenant-id",
+            "value": "{{tenantId}}"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "vaultId",
+              "value": "{{vaultId}}",
+              "type": "text"
+            },
+            {
+              "key": "file",
+              "type": "file"
+            }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:3000/documents?vaultId={{vaultId}}"
+        }
+      }
+    },
+    {
+      "name": "Documents/List",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "x-tenant-id",
+            "value": "{{tenantId}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:3000/documents?vaultId={{vaultId}}"
+        }
+      }
+    },
+    {
+      "name": "Documents/Download",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "x-tenant-id",
+            "value": "{{tenantId}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:3000/documents/{{documentId}}/download"
+        }
+      }
+    },
+    {
+      "name": "Documents/Delete",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "x-tenant-id",
+            "value": "{{tenantId}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:3000/documents/{{documentId}}"
+        }
+      }
+    },
+    {
+      "name": "Public/Verify",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:3000/public/verify?documentId={{documentId}}"
+        }
+      }
+    }
+  ]
+}

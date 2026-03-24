@@ -8,7 +8,7 @@ SecureChain Vault is a secure document storage platform that provides:
 - integrity verification anchored on a public blockchain (hash + timestamp)
 
 ## High-level components
-- vault-web (Next.js): UI for users, sharing, and verification
+- vault-web (Next.js): UI for users, sharing, and verification (esto estara en el frontend global finalmente)
 - vault-api (NestJS): authentication, authorization, audit, storage orchestration
 - PostgreSQL: metadata, access control lists, audit logs
 - MinIO (S3-compatible): encrypted file blobs

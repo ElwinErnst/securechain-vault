@@ -90,4 +90,11 @@ export class DocumentEntity {
 
   @Column({ type: 'int', nullable: true })
   anchorChainId!: number | null;
+
+  @Column({
+    type: 'int',
+    name: 'anchor_retries',
+    default: 0,
+  })
+  anchorRetries!: number;
 }
