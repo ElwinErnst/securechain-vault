@@ -1,73 +1,92 @@
-# SecureChain Vault — Threat Model (MVP)
+# SecureChain Vault Threat Model
 
-## Assets to protect
-- Document confidentiality (file contents)
-- Document integrity (file must not be altered without detection)
-- Access control (only authorized users can read/share/delete)
-- Audit trail integrity (logs must be append-only and reliable)
-- Secrets (JWT signing keys, encryption keys, DB creds)
+## Assets
 
-## Actors
-- Legitimate user
-- Malicious authenticated user (insider threat)
-- External attacker (unauthenticated)
-- Compromised client device
-- Compromised storage (MinIO/S3) or DB leak
-- Network attacker (MITM)
+- confidencialidad de documentos
+- integridad de documentos
+- integridad del audit trail
+- secretos de firma y cifrado
+- exactitud de autorización por tenant
+
+## Actores
+
+- usuario legítimo
+- usuario autenticado malicioso
+- atacante externo
+- cliente comprometido
+- atacante de red
+- storage comprometido
+- servicio interno mal configurado o bypassing del gateway
 
 ## Entry points
-- Auth endpoints (register/login/refresh)
-- File upload/download
-- Share/revoke access
-- Admin/auditor endpoints
 
-## Top threats and mitigations
+- login en `auth-api`
+- requests a `zerotrust-api`
+- endpoints de vaults y documentos
+- endpoints de auditoría
+- comunicación interna `vault-api -> auth-api`
 
-### 1) Credential stuffing / brute force on login
-Mitigations:
-- rate limiting on /auth/login (Sprint 2)
-- strong password policy (min length, common passwords block)
-- optional MFA (future)
+## Principales amenazas y mitigaciones
 
-### 2) Broken access control (IDOR)
-Mitigations:
-- server-side authorization on every document operation
-- effective permission check: owner => ADMIN, else ACL lookup
-- never trust client-provided ownerId/documentId relationship
+### 1. Bypass del gateway
 
-### 3) Data exposure from object storage leak
-Mitigations:
-- encrypt files BEFORE upload (AES-256-GCM) (Sprint 2)
-- do not store plaintext files in storage
-- least-privilege credentials and private bucket policy
+Mitigaciones:
 
-### 4) Tampering with stored documents
-Mitigations:
-- store SHA-256 of plaintext content in DB
-- anchor hash on-chain for public verification (Sprint 3)
-- verify on download or via explicit verify flow
+- `vault-api` verifica firma Zero Trust
+- headers autenticados via HMAC
+- timestamp y nonce para frenar replay
 
-### 5) Token theft / session abuse
-Mitigations:
-- short-lived access tokens (e.g., 15m)
-- refresh token rotation (Sprint 2)
-- store refresh token hash (DB/Redis) (Sprint 2)
-- secure cookie option for web (future)
+### 2. Broken access control entre tenants
 
-### 6) Audit log manipulation
-Mitigations:
-- append-only table (no updates/deletes)
-- DB role permissions (API role cannot UPDATE/DELETE audit_log)
-- optional hash chaining of logs (future)
-- optional on-chain anchoring of log batches (future)
+Mitigaciones:
 
-### 7) Upload of malicious files
-Mitigations:
-- allowlist mime types (MVP)
-- max file size limits (MVP)
-- optional antivirus scanning (future)
+- tenant context firmado por `zerotrust-api`
+- guards en `vault-api`
+- revalidación de membership contra `auth-api`
+
+### 3. Doble autoridad sobre tenants
+
+Mitigaciones:
+
+- `auth-api` como fuente de verdad única
+- `vault-api` ya no crea tenants
+- eliminación de dependencias estructurales locales a `tenants`
+
+### 4. Exposición de blobs por fuga de storage
+
+Mitigaciones:
+
+- cifrado antes de persistir en MinIO
+- bucket privado
+- storage keys con contexto de tenant y vault
+
+### 5. Tampering de documentos
+
+Mitigaciones:
+
+- hash del archivo
+- auditoría
+- posibilidad de anclaje externo más adelante
+
+### 6. Manipulación de auditoría
+
+Mitigaciones:
+
+- tabla append-only
+- hash chaining por scope
+- separación clara entre dominio operativo y trazabilidad
+
+### 7. Tokens stale o memberships desactualizadas
+
+Mitigaciones:
+
+- access tokens cortos
+- posibilidad de revalidación remota en operaciones sensibles
+- cache futuro sólo como optimización, no como fuente de verdad
 
 ## Assumptions
-- Production uses TLS everywhere
-- Secrets are stored in env/secret manager (never committed)
-- Database is not publicly accessible
+
+- TLS en producción
+- secretos fuera del repo
+- DB y MinIO no expuestos públicamente
+- los servicios internos comparten secretos por canal seguro

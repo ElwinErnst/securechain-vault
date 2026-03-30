@@ -5,15 +5,13 @@ import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
 import { parseBody } from '../utils/parse';
-import {
-  LoginResponseSchema,
-  TenantResponseSchema,
-  TenantsListSchema,
-} from '../utils/schemas/auth.schemas';
+import { TenantResponseSchema, TenantsListSchema } from '../utils/schemas/auth.schemas';
+import { buildZtHeaders } from '../utils/zt';
 
 describe('Tenants e2e', () => {
   let app: INestApplication;
-  let adminToken = '';
+  let adminUserId = '';
+  let tenantId = '';
 
   beforeAll(async () => {
     loadTestEnv();
@@ -28,14 +26,8 @@ describe('Tenants e2e', () => {
     // Reset and seed after app init so TypeORM has created the tables
     await resetDb();
     const seeded = await seedBase();
-
-    const loginRes = await http(app)
-      .post('/auth/login')
-      .send({ email: seeded.admin.email, password: seeded.admin.password })
-      .expect(201);
-
-    const tokens = parseBody(loginRes, LoginResponseSchema);
-    adminToken = tokens.accessToken;
+    adminUserId = seeded.admin.id;
+    tenantId = seeded.tenant.id;
   });
 
   afterAll(async () => {
@@ -45,7 +37,15 @@ describe('Tenants e2e', () => {
   it('lists tenants for user (at least 1)', async () => {
     const res = await http(app)
       .get('/tenants')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/tenants',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     const tenants = parseBody(res, TenantsListSchema);
@@ -55,7 +55,15 @@ describe('Tenants e2e', () => {
   it('creates tenant', async () => {
     const res = await http(app)
       .post('/tenants')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/tenants',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: 'Beta', slug: 'beta', type: 'ORG' })
       .expect(201);
 
@@ -67,13 +75,29 @@ describe('Tenants e2e', () => {
   it('rejects duplicate tenant slug', async () => {
     await http(app)
       .post('/tenants')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/tenants',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: 'Dup', slug: 'dup', type: 'ORG' })
       .expect(201);
 
     await http(app)
       .post('/tenants')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/tenants',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: 'Dup2', slug: 'dup', type: 'ORG' })
       .expect(409);
   });

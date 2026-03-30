@@ -1,8 +1,13 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { VaultEntity } from '../../database/entities/vault.entity';
+import { DocumentEntity } from '../../database/entities/document.entity';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { VaultDto } from './dto/vault.dto';
 import { slugify } from '../../common/utils/slugify.util';
@@ -12,6 +17,8 @@ export class VaultsService {
   constructor(
     @InjectRepository(VaultEntity)
     private readonly vaultRepo: Repository<VaultEntity>,
+    @InjectRepository(DocumentEntity)
+    private readonly docsRepo: Repository<DocumentEntity>,
   ) {}
 
   async create(tenantId: string, dto: CreateVaultDto): Promise<VaultDto> {
@@ -50,6 +57,33 @@ export class VaultsService {
     });
 
     return rows.map((v) => this.toDto(v));
+  }
+
+  async remove(tenantId: string, id: string): Promise<void> {
+    const vault = await this.vaultRepo.findOne({
+      where: { id, tenantId },
+      select: { id: true, isDefault: true },
+    });
+
+    if (!vault) {
+      throw new NotFoundException('Vault not found');
+    }
+
+    if (vault.isDefault) {
+      throw new ConflictException('Default vault cannot be deleted');
+    }
+
+    const docsCount = await this.docsRepo.count({
+      where: { tenantId, vaultId: id },
+    });
+
+    if (docsCount > 0) {
+      throw new ConflictException(
+        'Vault cannot be deleted while it still contains documents',
+      );
+    }
+
+    await this.vaultRepo.delete({ id, tenantId });
   }
 
   private toDto(v: VaultEntity): VaultDto {

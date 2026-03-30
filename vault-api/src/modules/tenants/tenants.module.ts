@@ -1,15 +1,10 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
 import { TenantsController } from './tenants.controller';
 import { TenantsService } from './tenants.service';
-import { TenantEntity } from '../../database/entities/tenant.entity';
-import { TenantMemberEntity } from '../../database/entities/tenant-member.entity';
-import { VaultEntity } from '../../database/entities/vault.entity';
+import { AuthDirectoryModule } from '../../common/modules/auth-directory/auth-directory.module';
 
 @Module({
-  imports: [
-    TypeOrmModule.forFeature([TenantEntity, TenantMemberEntity, VaultEntity]),
-  ],
+  imports: [AuthDirectoryModule],
   controllers: [TenantsController],
   providers: [TenantsService],
   exports: [TenantsService],

@@ -6,19 +6,17 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import type { Request } from 'express';
 
 import { TENANT_ROLES_KEY } from '../decorators/tenant-roles.decorator';
 import {
-  TenantMemberEntity,
   TenantMemberRole,
 } from '../../database/entities/tenant-member.entity';
 import { hasAtLeastRole } from '../utils/tenant-role-hierarchy.util';
 
 import { AUDIT_META_KEY, AuditMeta } from '../decorators/audit.decorator';
 import { AuditService } from '../../modules/audit/audit.service';
+import { AuthDirectoryService } from '../modules/auth-directory/auth-directory.service';
 
 type ReqParams = Record<string, string>;
 type ReqBody = unknown;
@@ -57,8 +55,7 @@ function resolvePath(req: Request): string {
 export class TenantRbacGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    @InjectRepository(TenantMemberEntity)
-    private readonly tenantMembersRepo: Repository<TenantMemberEntity>,
+    private readonly authDirectory: AuthDirectoryService,
     private readonly audit: AuditService,
   ) {}
 
@@ -84,10 +81,7 @@ export class TenantRbacGuard implements CanActivate {
       throw new ForbiddenException('Missing auth user');
     }
 
-    const membership = await this.tenantMembersRepo.findOne({
-      where: { tenantId, userId },
-      select: { role: true },
-    });
+    const membership = await this.authDirectory.getMembership(userId, tenantId);
 
     if (!membership) {
       throw new ForbiddenException('Not a tenant member');

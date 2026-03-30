@@ -11,18 +11,12 @@ import { AccessControlModule } from 'src/common/modules/access-control/access-co
 import { DocumentEntity } from 'src/database/entities/document.entity';
 import { VaultEntity } from 'src/database/entities/vault.entity';
 import { TenantRbacGuard } from 'src/common/guards/tenant-rbac.guard';
-import { TenantMemberEntity } from 'src/database/entities/tenant-member.entity';
 import { TenantKeyEntity } from 'src/database/entities/tenant-key.entity';
 import { AuditModule } from '../audit/audit.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      TenantMemberEntity,
-      DocumentEntity,
-      VaultEntity,
-      TenantKeyEntity,
-    ]), // agrega la entidad de claves
+    TypeOrmModule.forFeature([DocumentEntity, VaultEntity, TenantKeyEntity]),
     AuditModule,
     StorageModule,
     CryptoModule,

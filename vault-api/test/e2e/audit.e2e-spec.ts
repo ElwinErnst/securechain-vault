@@ -7,10 +7,9 @@ import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase, withDb } from '../utils/db';
 import { parseBody } from '../utils/parse';
-
-import { LoginResponseSchema } from '../utils/schemas/auth.schemas';
 import { VaultResponseSchema } from '../utils/schemas/vault.schemas';
 import { sha256Hex, stableStringify } from 'src/common/utils/audit-hash.util';
+import { buildZtHeaders } from '../utils/zt';
 
 // ---- Audit hashing (re-use prod util if you have it; otherwise keep local) ----
 
@@ -102,8 +101,6 @@ function calcChainHash(prevHash: string | null, eventHash: string) {
 describe('Audit e2e', () => {
   let app: INestApplication;
 
-  let adminToken = '';
-  let userToken = '';
   let tenantId = '';
   let adminUserId = '';
   let userId = '';
@@ -125,22 +122,6 @@ describe('Audit e2e', () => {
     tenantId = seeded.tenant.id;
     adminUserId = seeded.admin.id;
     userId = seeded.user.id;
-
-    const adminLoginRes = await http(app)
-      .post('/auth/login')
-      .send({ email: seeded.admin.email, password: seeded.admin.password })
-      .expect(201);
-
-    const adminTokens = parseBody(adminLoginRes, LoginResponseSchema);
-    adminToken = adminTokens.accessToken;
-
-    const userLoginRes = await http(app)
-      .post('/auth/login')
-      .send({ email: seeded.user.email, password: seeded.user.password })
-      .expect(201);
-
-    const userTokens = parseBody(userLoginRes, LoginResponseSchema);
-    userToken = userTokens.accessToken;
   });
 
   afterAll(async () => {
@@ -150,8 +131,15 @@ describe('Audit e2e', () => {
   it('creates SUCCESS audit log (VAULT_CREATE) with chained hashes', async () => {
     const res = await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: 'Audit Vault' })
       .expect(201);
 
@@ -197,8 +185,15 @@ describe('Audit e2e', () => {
   it('creates FAILURE audit log when USER cannot create vault (403)', async () => {
     await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${userToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId,
+          tenantId,
+          roles: ['USER'],
+        }),
+      )
       .send({ name: 'Forbidden Vault' })
       .expect(403);
 
@@ -214,15 +209,29 @@ describe('Audit e2e', () => {
   it('chain continuity: seq increases and prevHash links to previous chainHash', async () => {
     await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: `Chain A ${Date.now()}` })
       .expect(201);
 
     await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: `Chain B ${Date.now()}` })
       .expect(201);
 
@@ -239,8 +248,15 @@ describe('Audit e2e', () => {
   it('tenant reader: /audit-logs returns paginated items for tenant and can filter by action', async () => {
     const listRes = await http(app)
       .get('/audit-logs?page=1&limit=20')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/audit-logs?page=1&limit=20',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     const list = parseBody(listRes, AuditListResponseSchema);
@@ -256,8 +272,15 @@ describe('Audit e2e', () => {
 
     const filterRes = await http(app)
       .get('/audit-logs?action=VAULT_CREATE&page=1&limit=20')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/audit-logs?action=VAULT_CREATE&page=1&limit=20',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     const filtered = parseBody(filterRes, AuditListResponseSchema);
@@ -270,12 +293,28 @@ describe('Audit e2e', () => {
   it('global reader: /admin/audit-logs forbids global USER and allows global ADMIN', async () => {
     await http(app)
       .get('/admin/audit-logs?page=1&limit=10')
-      .set('Authorization', `Bearer ${userToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/admin/audit-logs?page=1&limit=10',
+          userId,
+          tenantId,
+          roles: ['USER'],
+        }),
+      )
       .expect(403);
 
     const adminRes = await http(app)
       .get('/admin/audit-logs?page=1&limit=10')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/admin/audit-logs?page=1&limit=10',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     const adminList = parseBody(adminRes, AuditListResponseSchema);

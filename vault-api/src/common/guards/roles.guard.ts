@@ -4,7 +4,7 @@ import { Request } from 'express';
 
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { RoleName } from '../../database/entities/role.entity';
-import { JwtPayload } from '../../modules/auth/types/jwt-payload.type';
+import { AuthUser } from '../types/auth-user.type';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -21,7 +21,7 @@ export class RolesGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    const user = request.user as JwtPayload | undefined;
+    const user = request.user as AuthUser | undefined;
 
     if (!user || !Array.isArray(user.roles)) {
       return false;

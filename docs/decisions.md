@@ -1,42 +1,80 @@
-# SecureChain Vault — Architecture Decisions (ADRs-lite)
+# SecureChain Vault Architecture Decisions
 
-## D1 — Use blockchain only for integrity proofs
-Decision:
-- Store only document hashes (bytes32) on-chain, not documents.
+## D1
 
-Rationale:
-- Documents are sensitive and large.
-- On-chain storage is public and expensive.
-- Hash anchoring gives integrity + timestamp with minimal exposure.
+Decisión:
 
-## D2 — Encrypt before object storage
-Decision:
-- Encrypt document content at the API layer prior to MinIO/S3 upload (AES-256-GCM).
+- `auth-api` es la fuente de verdad de tenants y memberships
 
 Rationale:
-- Object storage should be treated as potentially observable.
-- Encryption makes a storage leak less catastrophic.
 
-## D3 — RBAC + per-document ACL
-Decision:
-- RBAC for global capabilities (admin/auditor), ACL for document-specific sharing.
+- evita doble autoridad
+- reduce riesgo de desalineación entre servicios
+- simplifica evolución futura con cache opcional
 
-Rationale:
-- Realistic enterprise pattern.
-- Enables secure sharing between users without over-permissioning.
+## D2
 
-## D4 — Append-only audit log
-Decision:
-- Audit events are write-only, never updated or deleted.
+Decisión:
+
+- `vault-api` consume directorio de tenants y memberships vía endpoints internos de `auth-api`
 
 Rationale:
-- Audit logs are a security control and must be trustworthy.
-- Supports forensics and compliance.
 
-## D5 — TypeORM + PostgreSQL
-Decision:
-- Use TypeORM with Postgres for metadata and access control.
+- mantiene a `vault-api` enfocado en su dominio
+- desacopla autorización del almacenamiento local de membresías
+- permite revalidar acceso en operaciones sensibles
+
+## D3
+
+Decisión:
+
+- `vault-api` no crea tenants; `POST /tenants` debe fallar o delegar
 
 Rationale:
-- Mature relational model for ACL and audit queries.
-- Strong consistency for authorization decisions.
+
+- refuerza el ownership correcto del dato
+- evita que aparezcan tenants huérfanos o inconsistentes
+
+## D4
+
+Decisión:
+
+- mantener `tenant_id` como dato de dominio en `vaults`, `documents`, `tenant_keys` y `audit_logs`
+
+Rationale:
+
+- sigue siendo útil para scoping, índices, auditoría y storage keys
+- no hace falta una entidad local autoritativa para conservar ese contexto
+
+## D5
+
+Decisión:
+
+- remover foreign keys locales hacia `tenants` dentro de `vault-api`
+
+Rationale:
+
+- reduce acople estructural a un dato cuyo ownership ya está fuera del servicio
+- evita que una tabla local heredada condicione el dominio real de `vault`
+
+## D6
+
+Decisión:
+
+- mantener auditoría append-only con hash chaining local
+
+Rationale:
+
+- permite trazabilidad y verificación de integridad
+- soporta forensics sin necesidad de blockchain en la etapa actual
+
+## D7
+
+Decisión:
+
+- cifrar documentos antes de escribir a MinIO
+
+Rationale:
+
+- object storage se trata como observable
+- el storage leak pasa a ser menos crítico para confidencialidad

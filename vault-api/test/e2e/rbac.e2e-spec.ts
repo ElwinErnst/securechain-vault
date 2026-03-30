@@ -14,6 +14,7 @@ import { JwtAuthGuard } from '../../src/common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../src/common/guards/roles.guard';
 import { Roles } from '../../src/common/decorators/roles.decorator';
 import { RoleName } from '../../src/database/entities/role.entity';
+import { buildZtHeaders } from '../utils/zt';
 
 @Controller('/__test')
 class TestProtectedController {
@@ -36,30 +37,12 @@ class TestOnlyModule {}
 
 type LoginResponse = { accessToken: string };
 
-function isLoginResponse(x: unknown): x is LoginResponse {
-  if (typeof x !== 'object' || x === null) return false;
-  const r = x as Record<string, unknown>;
-  return typeof r.accessToken === 'string';
-}
-
-async function login(
-  app: INestApplication,
-  input: { email: string; password: string },
-): Promise<string> {
-  const res = await http(app).post('/auth/login').send(input).expect(201);
-
-  const body: unknown = res.body;
-  if (!isLoginResponse(body)) {
-    throw new Error('Invalid /auth/login response shape');
-  }
-  return body.accessToken;
-}
-
 describe('RBAC e2e', () => {
   let app: INestApplication;
 
-  let adminToken = '';
-  let userToken = '';
+  let adminUserId = '';
+  let userId = '';
+  let tenantId = '';
 
   beforeAll(async () => {
     loadTestEnv();
@@ -73,16 +56,9 @@ describe('RBAC e2e', () => {
 
     await resetDb();
     const seeded = await seedBase();
-
-    adminToken = await login(app, {
-      email: seeded.admin.email,
-      password: seeded.admin.password,
-    });
-
-    userToken = await login(app, {
-      email: seeded.user.email,
-      password: seeded.user.password,
-    });
+    adminUserId = seeded.admin.id;
+    userId = seeded.user.id;
+    tenantId = seeded.tenant.id;
   });
 
   afterAll(async () => {
@@ -96,21 +72,45 @@ describe('RBAC e2e', () => {
   it('allows /__test/auth-only with token', async () => {
     await http(app)
       .get('/__test/auth-only')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/__test/auth-only',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
   });
 
   it('allows ADMIN to access admin-only', async () => {
     await http(app)
       .get('/__test/admin-only')
-      .set('Authorization', `Bearer ${adminToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/__test/admin-only',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
   });
 
   it('denies USER for admin-only', async () => {
     await http(app)
       .get('/__test/admin-only')
-      .set('Authorization', `Bearer ${userToken}`)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: '/__test/admin-only',
+          userId,
+          tenantId,
+          roles: ['USER'],
+        }),
+      )
       .expect(403);
   });
 });

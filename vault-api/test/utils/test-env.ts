@@ -3,10 +3,8 @@ export function loadTestEnv(): void {
 
   // API
   process.env.PORT ??= '0'; // ephemeral port en tests
-  process.env.JWT_ACCESS_SECRET ??= 'test_access_secret';
-  process.env.JWT_REFRESH_SECRET ??= 'test_refresh_secret';
-  process.env.JWT_ACCESS_EXPIRES_IN ??= '15m';
-  process.env.JWT_REFRESH_EXPIRES_IN ??= '7d';
+  process.env.ZT_HMAC_SECRET ??= 'test_zt_secret';
+  process.env.ZT_MAX_CLOCK_SKEW_MS ??= '30000';
 
   // DB (ajustá si tu compose expone otro puerto)
   process.env.DB_HOST ??= '127.0.0.1';

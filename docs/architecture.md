@@ -1,55 +1,89 @@
-# SecureChain Vault — Architecture
+# SecureChain Vault Architecture
 
-## Goal
-SecureChain Vault is a secure document storage platform that provides:
-- strong authentication and access control (RBAC + per-document ACL)
-- encryption at rest (server-side before storage)
-- immutable audit trail (append-only)
-- integrity verification anchored on a public blockchain (hash + timestamp)
+## Objetivo
 
-## High-level components
-- vault-web (Next.js): UI for users, sharing, and verification (esto estara en el frontend global finalmente)
-- vault-api (NestJS): authentication, authorization, audit, storage orchestration
-- PostgreSQL: metadata, access control lists, audit logs
-- MinIO (S3-compatible): encrypted file blobs
-- (Sprint 3) EVM chain: stores document hashes (bytes32) for public integrity proof
+`vault-api` es el servicio de dominio para almacenamiento seguro de documentos dentro de Sentinel Suite.
 
-## Data flow (upload)
-1. User authenticates (JWT).
-2. User uploads a file to vault-api.
-3. vault-api:
-   - computes SHA-256 hash of raw content
-   - (Sprint 2) encrypts content using AES-256-GCM and uploads to MinIO
-   - stores metadata in Postgres (owner, size, mimeType, content hash, storage key)
-   - grants owner ACL = ADMIN
-   - writes audit event DOC_UPLOAD
-4. (Sprint 3) vault-api registers (docId, hash) on-chain and stores tx metadata.
+Provee:
 
-## Data flow (download)
-1. User requests download.
-2. vault-api checks effective permission:
-   - owner => ADMIN
-   - else ACL entry => READ/WRITE/ADMIN
-3. If allowed, vault-api fetches blob from MinIO
-   - (Sprint 2) decrypts and streams it back
-4. Writes audit event DOC_DOWNLOAD.
+- vaults multi-tenant
+- manejo de documentos
+- cifrado antes de object storage
+- auditoría append-only
+- integración con Zero Trust
 
-## Data flow (verify integrity)
-1. Client or API recomputes SHA-256 on the downloaded clear file.
-2. Compare:
-   - DB stored hash (expected)
-   - on-chain hash (public proof)
-3. Result:
-   - match => integrity OK
-   - mismatch => tampering/corruption suspected
+## Boundaries
+
+- `auth-api`: autoridad de usuarios, tenants y memberships
+- `zerotrust-api`: punto de entrada confiable y firmante de requests
+- `vault-api`: dominio de vaults, documentos, claves y auditoría
+- PostgreSQL: metadatos y eventos
+- MinIO: blobs cifrados
+
+## High-level flow
+
+```text
+Client
+  -> auth-api (login)
+  -> zerotrust-api
+  -> vault-api
+  -> Postgres / MinIO
+```
+
+## Flujo de autenticación y autorización
+
+1. el usuario hace login en `auth-api`
+2. `auth-api` emite un JWT para `zerotrust-api`
+3. el cliente llama a `zerotrust-api`
+4. `zerotrust-api` valida JWT y policy
+5. `zerotrust-api` firma la request
+6. `vault-api` verifica la firma y obtiene `userId`, `tenantId` y `roles`
+7. cuando necesita validar membership o listar tenants, `vault-api` consulta a `auth-api`
+
+## Flujo de upload
+
+1. request autenticada entra por `zerotrust-api`
+2. `vault-api` valida acceso al tenant y al vault
+3. calcula hash del archivo
+4. cifra el contenido
+5. sube el blob cifrado a MinIO
+6. guarda metadatos en PostgreSQL
+7. escribe evento de auditoría
+
+## Flujo de download
+
+1. request autenticada entra por `zerotrust-api`
+2. `vault-api` valida acceso
+3. busca metadatos y blob
+4. descifra el contenido
+5. devuelve el archivo
+6. escribe evento de auditoría
+
+## Modelo de tenants actual
+
+Decisión vigente:
+
+- `auth-api` es la fuente de verdad de tenants y memberships
+- `vault-api` conserva `tenant_id` como identificador de contexto
+- `vault-api` ya no crea tenants
+- `vault-api` ya no depende de foreign keys a `tenants` para operar su dominio
+
+Eso permite:
+
+- menos duplicación de ownership
+- menos riesgo de desalineación de IDs o roles
+- posibilidad de agregar cache más adelante sin cambiar el modelo mental
 
 ## Trust boundaries
-- Client: untrusted (may be compromised)
-- API: trusted compute boundary
-- DB: trusted persistence for metadata and ACL
-- Object storage: treated as potentially observable; confidentiality relies on encryption
-- Blockchain: public, immutable, used only for hashes (no sensitive data)
+
+- cliente: no confiable
+- gateway Zero Trust: boundary de entrada confiable
+- `vault-api`: boundary de cómputo confiable
+- object storage: observable, no confiable para confidencialidad
+- PostgreSQL: persistencia confiable de metadatos
 
 ## Non-goals
-- Storing documents on-chain (costly, public, not required)
-- Acting as a custodial wallet or key custodian for users
+
+- crear tenants localmente en `vault-api`
+- confiar en headers no firmados
+- usar object storage como fuente de verdad de permisos

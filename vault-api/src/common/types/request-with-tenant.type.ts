@@ -1,7 +1,7 @@
 import type { Request } from 'express';
-import type { AuthUser } from '../../modules/auth/types/auth-user.type';
+import type { AuthUser } from './auth-user.type';
 
 export type RequestWithTenant = Request & {
-  tenantId?: string;
+  tenantContext?: { tenantId: string };
   user?: AuthUser;
 };

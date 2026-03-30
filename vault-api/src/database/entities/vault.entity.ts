@@ -3,12 +3,9 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { TenantEntity } from './tenant.entity';
 
 @Index(['tenantId', 'slug'], { unique: true })
 @Entity({ name: 'vaults' })
@@ -19,10 +16,6 @@ export class VaultEntity {
   @Index()
   @Column({ type: 'uuid', name: 'tenant_id' })
   tenantId!: string;
-
-  @ManyToOne(() => TenantEntity, (t) => t.vaults, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'tenant_id' })
-  tenant!: TenantEntity;
 
   @Column({ type: 'varchar', length: 120 })
   name!: string;

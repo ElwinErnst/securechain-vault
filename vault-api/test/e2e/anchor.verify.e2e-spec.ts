@@ -6,9 +6,8 @@ import { AppModule } from '../../src/app.module';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
-
-import { LoginResponseSchema } from '../utils/schemas/auth.schemas';
 import { VaultResponseSchema } from '../utils/schemas/vault.schemas';
+import { buildZtHeaders } from '../utils/zt';
 
 /* ------------------------------
    Schemas
@@ -34,7 +33,6 @@ const PublicVerifyResponseSchema = z.object({
   anchoredAt: z.string().nullable(),
 });
 
-type LoginResponse = z.infer<typeof LoginResponseSchema>;
 type VaultResponse = z.infer<typeof VaultResponseSchema>;
 type DocumentItem = z.infer<typeof DocumentItemSchema>;
 type PublicVerifyResponse = z.infer<typeof PublicVerifyResponseSchema>;
@@ -42,7 +40,7 @@ type PublicVerifyResponse = z.infer<typeof PublicVerifyResponseSchema>;
 describe('Public Verify e2e', () => {
   let app: INestApplication;
 
-  let adminToken = '';
+  let adminUserId = '';
   let tenantId = '';
   let vaultId = '';
   let documentId = '';
@@ -60,24 +58,19 @@ describe('Public Verify e2e', () => {
     await resetDb();
     const seeded = await seedBase();
     tenantId = seeded.tenant.id;
-
-    const loginRes = await http(app)
-      .post('/auth/login')
-      .send({
-        email: seeded.admin.email,
-        password: seeded.admin.password,
-      })
-      .expect(201);
-
-    const login: LoginResponse = LoginResponseSchema.parse(
-      loginRes.body as unknown,
-    );
-    adminToken = login.accessToken;
+    adminUserId = seeded.admin.id;
 
     const vaultRes = await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: `Verify Vault ${Date.now()}` })
       .expect(201);
 
@@ -90,8 +83,15 @@ describe('Public Verify e2e', () => {
 
     const uploadRes = await http(app)
       .post(`/documents?vaultId=${vaultId}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${vaultId}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'verify.pdf',
         contentType: 'application/pdf',

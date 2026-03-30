@@ -8,7 +8,6 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { TenantMemberEntity } from './tenant-member.entity';
-import { VaultEntity } from './vault.entity';
 
 export enum TenantType {
   ORG = 'ORG',
@@ -36,9 +35,6 @@ export class TenantEntity {
 
   @OneToMany(() => TenantMemberEntity, (m) => m.tenant)
   members!: TenantMemberEntity[];
-
-  @OneToMany(() => VaultEntity, (v) => v.tenant)
-  vaults!: VaultEntity[];
 
   @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt!: Date;

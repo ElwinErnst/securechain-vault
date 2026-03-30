@@ -1,10 +1,5 @@
 import { z } from 'zod';
 
-export const LoginResponseSchema = z.object({
-  accessToken: z.string(),
-  refreshToken: z.string(),
-});
-
 export const TenantResponseSchema = z.object({
   id: z.string().uuid().or(z.string()), // por si no es uuid estricto en tests
   name: z.string(),

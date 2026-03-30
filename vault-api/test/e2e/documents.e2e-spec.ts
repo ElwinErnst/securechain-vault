@@ -8,9 +8,8 @@ import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase, withDb } from '../utils/db';
 import { parseBody } from '../utils/parse';
-
-import { LoginResponseSchema } from '../utils/schemas/auth.schemas';
 import { VaultResponseSchema } from '../utils/schemas/vault.schemas';
+import { buildZtHeaders } from '../utils/zt';
 
 /* ------------------------------
    Zod Schemas
@@ -102,8 +101,8 @@ async function getDocById(id: string) {
 describe('Documents e2e', () => {
   let app: INestApplication;
 
-  let adminToken = '';
-  let userToken = '';
+  let adminUserId = '';
+  let userId = '';
   let tenantId = '';
   let vaultId = '';
 
@@ -121,37 +120,22 @@ describe('Documents e2e', () => {
     const seeded = await seedBase();
 
     tenantId = seeded.tenant.id;
-
-    /* ---- LOGIN ADMIN ---- */
-
-    const adminLoginRes = await http(app)
-      .post('/auth/login')
-      .send({
-        email: seeded.admin.email,
-        password: seeded.admin.password,
-      })
-      .expect(201);
-
-    adminToken = parseBody(adminLoginRes, LoginResponseSchema).accessToken;
-
-    /* ---- LOGIN USER ---- */
-
-    const userLoginRes = await http(app)
-      .post('/auth/login')
-      .send({
-        email: seeded.user.email,
-        password: seeded.user.password,
-      })
-      .expect(201);
-
-    userToken = parseBody(userLoginRes, LoginResponseSchema).accessToken;
+    adminUserId = seeded.admin.id;
+    userId = seeded.user.id;
 
     /* ---- CREATE VAULT ---- */
 
     const vaultRes = await http(app)
       .post('/vaults')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: '/vaults',
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .send({ name: `Docs Vault ${Date.now()}` })
       .expect(201);
 
@@ -174,8 +158,15 @@ describe('Documents e2e', () => {
       .post(
         `/documents?vaultId=${encodeURIComponent(vaultId)}&name=${encodeURIComponent('Contrato.pdf')}`,
       )
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}&name=${encodeURIComponent('Contrato.pdf')}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'contrato.pdf',
         contentType: 'application/pdf',
@@ -199,8 +190,15 @@ describe('Documents e2e', () => {
 
     await http(app)
       .post(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${userToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId,
+          tenantId,
+          roles: ['USER'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'x.pdf',
         contentType: 'application/pdf',
@@ -213,8 +211,15 @@ describe('Documents e2e', () => {
 
     await http(app)
       .post(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', buf, {
         filename: 'virus.exe',
         contentType: 'application/x-msdownload',
@@ -229,8 +234,15 @@ describe('Documents e2e', () => {
   it('lists documents for tenant + vault', async () => {
     const res = await http(app)
       .get(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     const items = parseBody(res, DocumentListSchema);
@@ -251,8 +263,15 @@ describe('Documents e2e', () => {
 
     const upRes = await http(app)
       .post(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'dl.pdf',
         contentType: 'application/pdf',
@@ -263,8 +282,15 @@ describe('Documents e2e', () => {
 
     const dlRes = await http(app)
       .get(`/documents/${doc.id}/download`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: `/documents/${doc.id}/download`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .buffer(true)
       .parse(binaryParser)
       .expect(200);
@@ -288,8 +314,15 @@ describe('Documents e2e', () => {
 
     const upRes = await http(app)
       .post(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'del.pdf',
         contentType: 'application/pdf',
@@ -300,14 +333,28 @@ describe('Documents e2e', () => {
 
     await http(app)
       .delete(`/documents/${doc.id}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'DELETE',
+          path: `/documents/${doc.id}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(200);
 
     await http(app)
       .get(`/documents/${doc.id}/download`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'GET',
+          path: `/documents/${doc.id}/download`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .expect(404);
   });
 
@@ -316,8 +363,15 @@ describe('Documents e2e', () => {
 
     const upRes = await http(app)
       .post(`/documents?vaultId=${encodeURIComponent(vaultId)}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'POST',
+          path: `/documents?vaultId=${encodeURIComponent(vaultId)}`,
+          userId: adminUserId,
+          tenantId,
+          roles: ['ADMIN'],
+        }),
+      )
       .attach('file', pdfBuf, {
         filename: 'x.pdf',
         contentType: 'application/pdf',
@@ -328,8 +382,15 @@ describe('Documents e2e', () => {
 
     await http(app)
       .delete(`/documents/${doc.id}`)
-      .set('Authorization', `Bearer ${userToken}`)
-      .set('x-tenant-id', tenantId)
+      .set(
+        buildZtHeaders({
+          method: 'DELETE',
+          path: `/documents/${doc.id}`,
+          userId,
+          tenantId,
+          roles: ['USER'],
+        }),
+      )
       .expect(403);
   });
 });

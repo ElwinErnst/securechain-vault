@@ -9,7 +9,6 @@ import {
   Unique,
 } from 'typeorm';
 import { TenantEntity } from './tenant.entity';
-import { UserEntity } from './user.entity';
 
 export enum TenantMemberRole {
   OWNER = 'OWNER',
@@ -37,10 +36,6 @@ export class TenantMemberEntity {
   @ManyToOne(() => TenantEntity, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'tenant_id' })
   tenant: TenantEntity;
-
-  @ManyToOne(() => UserEntity, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'user_id' })
-  user: UserEntity;
 
   @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt!: Date;

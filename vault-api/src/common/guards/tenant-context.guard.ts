@@ -1,15 +1,16 @@
 import {
-  BadRequestException,
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
 } from '@nestjs/common';
 import { isUUID } from 'class-validator';
+import type { AuthUser } from '../types/auth-user.type';
 
 type TenantContext = { tenantId: string };
 
 type TenantRequest = {
-  headers: Record<string, string | string[] | undefined>;
+  user?: AuthUser;
   tenantContext?: TenantContext;
 };
 
@@ -17,16 +18,14 @@ type TenantRequest = {
 export class TenantContextGuard implements CanActivate {
   canActivate(context: ExecutionContext): true {
     const req = context.switchToHttp().getRequest<TenantRequest>();
-
-    const raw = req.headers['x-tenant-id'];
-    const tenantId = Array.isArray(raw) ? raw[0] : raw;
+    const tenantId = req.tenantContext?.tenantId;
 
     if (!tenantId) {
-      throw new BadRequestException('Missing x-tenant-id header');
+      throw new ForbiddenException('Missing tenant context from ZT');
     }
 
     if (!isUUID(tenantId)) {
-      throw new BadRequestException('Invalid x-tenant-id');
+      throw new ForbiddenException('Invalid ZT tenant id');
     }
 
     req.tenantContext = { tenantId };

@@ -1,125 +1,67 @@
 # SecureChain Vault
 
-Secure document storage platform focused on security-first architecture.
+Subproyecto de almacenamiento seguro de documentos dentro de Sentinel Suite.
 
-## Features
+## Estado actual
 
--   Strong authentication (JWT + refresh rotation)
--   RBAC + per-document ACL
--   Encryption before object storage
--   Append-only audit trail
--   Blockchain-based integrity anchoring (EVM testnet -- planned)
+`vault-api` ya está integrado con:
 
-## Stack
+- `auth-api` para identidad, tenants y memberships
+- `zerotrust-api` como perímetro obligatorio de entrada
+- PostgreSQL para metadatos, auditoría y claves de tenant
+- MinIO para blobs cifrados
 
-### Backend
+## Dirección arquitectónica vigente
 
--   NestJS
--   TypeORM
--   PostgreSQL
--   Argon2
--   JWT (short-lived access + rotating refresh tokens)
+- `auth-api` es la autoridad de `tenants` y `memberships`
+- `vault-api` consume esa información de forma remota
+- `vault-api` ya no crea tenants
+- `vault-api` mantiene `tenant_id` como dato de dominio para vaults, documentos y auditoría
+- `vault-api` ya no depende de foreign keys locales hacia `tenants`
 
-### Storage
+## Componentes
 
--   MinIO (S3-compatible object storage)
+- `vault-api` (NestJS)
+- PostgreSQL
+- MinIO
+- documentación de arquitectura y threat model
 
-### Infrastructure
+## Capacidades implementadas
 
--   Docker Compose
--   Isolated service containers
--   Volume-based persistence
--   Init SQL for deterministic schema creation
--   No `synchronize: true` in production
+- vaults multi-tenant
+- documentos por tenant y vault
+- cifrado de documentos antes de storage
+- auditoría append-only con hash chaining local
+- validación de requests firmadas por Zero Trust
+- integración remota con el directorio de `auth-api`
 
-### Frontend (planned)
+## Infraestructura
 
--   Next.js
+El entorno de desarrollo reproducible usa Docker Compose y SQL de inicialización:
 
-### Blockchain (Sprint 3)
+- schema base en `infra/postgres/init`
+- bucket de MinIO creado automáticamente
+- persistencia por volúmenes
 
--   Ethereum (EVM-compatible testnet)
--   Solidity smart contract (hash anchoring only)
+## Arranque
 
-## Architecture Overview
+Desde la raíz del repo:
 
-Client\
-↓\
-NestJS API\
-↓\
-PostgreSQL (metadata, ACL, audit)\
-MinIO (encrypted blobs)\
-↓\
-(EVM chain -- integrity anchoring)
+```bash
+docker compose up --build
+```
 
-### Trust Boundaries
+Servicio expuesto:
 
--   Client: untrusted
--   API: trusted compute boundary
--   Database: trusted metadata store
--   Object storage: treated as observable
--   Blockchain: public, immutable, stores only hashes
+- `vault-api`: [http://localhost:3000](http://localhost:3000)
 
-## Infrastructure
+Acceso recomendado desde cliente:
 
-The project uses Docker Compose to provide a fully reproducible
-development environment.
+- [http://localhost:3010/vault](http://localhost:3010/vault) a través de `zerotrust-api`
 
-### Services
+## Documentación
 
--   PostgreSQL 16
--   MinIO (S3-compatible storage)
-
-### Principles
-
--   Database schema initialized via SQL scripts
--   Volume-backed persistence
--   Deterministic reset workflow
--   Clear separation of application and infrastructure layers
-
-## Local Setup
-
-Start infrastructure:
-
-yarn db:up
-
-Start API:
-
-yarn start:dev
-
-Reset database:
-
-yarn db:reset
-
-## Security Features Implemented
-
--   Password hashing with Argon2
--   Short-lived access tokens
--   Refresh token rotation
--   Refresh token reuse detection
--   Family-based session revocation
--   Logout (single-session + global)
--   Hashed refresh tokens in DB
--   Strict TypeScript typing
--   Dockerized reproducible infra
-
-## Documentation
-
--   /docs/architecture.md
--   /docs/adrs.md
--   /docs/threat-model.md
-
-## Current Status
-
--   Sprint 1 Complete --- Authentication & Security Foundation
--   Sprint 2 --- Multi-tenant Vault + Document ACL (in progress)
--   Sprint 3 --- On-chain hash anchoring (planned)
-
-## Roadmap
-
--   [ ] Multi-tenant organizations
--   [ ] Vault creation
--   [ ] Document upload (SHA-256 hashing)
--   [ ] AES-256-GCM encryption before storage
--   [ ] Append-only audit log
--   [ ] EVM smart contract for integrity proof
+- [docs/architecture.md](/Users/sasha/Proyects/sentinel-suite/securechain-vault/docs/architecture.md)
+- [docs/decisions.md](/Users/sasha/Proyects/sentinel-suite/securechain-vault/docs/decisions.md)
+- [docs/threat-model.md](/Users/sasha/Proyects/sentinel-suite/securechain-vault/docs/threat-model.md)
+- [vault-api/README.md](/Users/sasha/Proyects/sentinel-suite/securechain-vault/vault-api/README.md)

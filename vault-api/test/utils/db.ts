@@ -1,5 +1,5 @@
 import { Client, type QueryResult } from 'pg';
-import * as argon2 from 'argon2';
+import { randomUUID } from 'crypto';
 
 type DbConfig = {
   host: string;
@@ -85,22 +85,13 @@ export async function resetDb(): Promise<void> {
 }
 
 export type SeedResult = {
-  admin: { id: string; email: string; password: string };
-  user: { id: string; email: string; password: string };
-  member: { id: string; email: string; password: string };
-  roles: { adminId: string; userId: string; auditorId: string };
+  admin: { id: string };
+  user: { id: string };
+  member: { id: string };
   tenant: { id: string; slug: string };
 };
 
 export async function seedBase(): Promise<SeedResult> {
-  const adminPassword = '12345678';
-  const userPassword = '12345678';
-  const memberPassword = '12345678';
-
-  const adminHash = await argon2.hash(adminPassword);
-  const userHash = await argon2.hash(userPassword);
-  const memberHash = await argon2.hash(memberPassword);
-
   return withDb(async (c) => {
     // Verify that tenants table exists (TypeORM should have created it)
     const tableCheck = await c.query<{ exists: boolean }>(`
@@ -116,61 +107,9 @@ export async function seedBase(): Promise<SeedResult> {
       );
     }
 
-    // roles (global)
-    const adminRoleId = await insertReturningId(
-      c,
-      `INSERT INTO roles(name) VALUES ('ADMIN') RETURNING id`,
-    );
-    const userRoleId = await insertReturningId(
-      c,
-      `INSERT INTO roles(name) VALUES ('USER') RETURNING id`,
-    );
-    const auditorRoleId = await insertReturningId(
-      c,
-      `INSERT INTO roles(name) VALUES ('AUDITOR') RETURNING id`,
-    );
-
-    // users
-    const adminUserId = await insertReturningId(
-      c,
-      `INSERT INTO users(email, password_hash, is_active)
-       VALUES ($1, $2, true) RETURNING id`,
-      ['admin@vault.local', adminHash],
-    );
-
-    const normalUserId = await insertReturningId(
-      c,
-      `INSERT INTO users(email, password_hash, is_active)
-       VALUES ($1, $2, true) RETURNING id`,
-      ['user@vault.local', userHash],
-    );
-
-    const memberUserId = await insertReturningId(
-      c,
-      `INSERT INTO users(email, password_hash, is_active)
-       VALUES ($1, $2, true) RETURNING id`,
-      ['member@vault.local', memberHash],
-    );
-
-    // user_roles (global RBAC)
-    await c.query(`INSERT INTO user_roles(user_id, role_id) VALUES ($1, $2)`, [
-      adminUserId,
-      adminRoleId,
-    ]);
-    await c.query(`INSERT INTO user_roles(user_id, role_id) VALUES ($1, $2)`, [
-      adminUserId,
-      userRoleId,
-    ]);
-
-    await c.query(`INSERT INTO user_roles(user_id, role_id) VALUES ($1, $2)`, [
-      normalUserId,
-      userRoleId,
-    ]);
-
-    await c.query(`INSERT INTO user_roles(user_id, role_id) VALUES ($1, $2)`, [
-      memberUserId,
-      userRoleId,
-    ]);
+    const adminUserId = randomUUID();
+    const normalUserId = randomUUID();
+    const memberUserId = randomUUID();
 
     // tenant
     const tenantId = await insertReturningId(
@@ -200,26 +139,9 @@ export async function seedBase(): Promise<SeedResult> {
     );
 
     return {
-      admin: {
-        id: adminUserId,
-        email: 'admin@vault.local',
-        password: adminPassword,
-      },
-      user: {
-        id: normalUserId,
-        email: 'user@vault.local',
-        password: userPassword,
-      },
-      member: {
-        id: memberUserId,
-        email: 'member@vault.local',
-        password: memberPassword,
-      },
-      roles: {
-        adminId: adminRoleId,
-        userId: userRoleId,
-        auditorId: auditorRoleId,
-      },
+      admin: { id: adminUserId },
+      user: { id: normalUserId },
+      member: { id: memberUserId },
       tenant: { id: tenantId, slug: 'acme' },
     };
   });

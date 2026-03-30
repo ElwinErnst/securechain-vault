@@ -88,7 +88,7 @@ export class DocumentEntity {
   @Column({ type: 'timestamptz', name: 'anchored_at', nullable: true })
   anchoredAt!: Date | null;
 
-  @Column({ type: 'int', nullable: true })
+  @Column({ type: 'int', name: 'anchor_chain_id', nullable: true })
   anchorChainId!: number | null;
 
   @Column({

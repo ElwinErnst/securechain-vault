@@ -1,98 +1,77 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# SecureChain Vault API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+API de dominio para vaults, documentos, cifrado y auditoría.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## Responsabilidades
 
-## Description
+- creación y listado de vaults
+- upload, download y borrado de documentos
+- cifrado antes de guardar en MinIO
+- manejo de claves por tenant
+- auditoría append-only
+- verificación de requests firmadas por `zerotrust-api`
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Qué no hace más
 
-## Project setup
+`vault-api` ya no es dueño de:
 
-```bash
-$ yarn install
-```
+- creación de tenants
+- memberships por tenant
+- resolución autoritativa de roles
 
-## Compile and run the project
+Eso ahora se resuelve desde `auth-api`.
 
-```bash
-# development
-$ yarn run start
+## Integración con auth-api
 
-# watch mode
-$ yarn run start:dev
+`vault-api` tiene un cliente interno de directorio que usa:
 
-# production mode
-$ yarn run start:prod
-```
+- `GET /api/internal/tenants/:id`
+- `GET /api/internal/memberships/resolve`
+- `GET /api/internal/users/:userId/tenants`
 
-## Run tests
+Con eso:
 
-```bash
-# unit tests
-$ yarn run test
+- `GET /tenants` devuelve tenants desde `auth-api`
+- el guard de RBAC de tenant valida memberships contra `auth-api`
+- `POST /tenants` devuelve `409 Conflict`
 
-# e2e tests
-$ yarn run test:e2e
+## Integración con Zero Trust
 
-# test coverage
-$ yarn run test:cov
-```
+`vault-api` espera requests firmadas con:
 
-## Deployment
+- `x-zt-*`
+- HMAC compartido
+- timestamp válido
+- nonce no repetido
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+El acceso público recomendado es a través de `zerotrust-api`, no directo.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Setup local
 
 ```bash
-$ yarn install -g @nestjs/mau
-$ mau deploy
+yarn install
+yarn start:dev
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Build:
 
-## Resources
+```bash
+yarn build
+yarn start:prod
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+## Variables relevantes
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+- DB de PostgreSQL
+- MinIO
+- `ZT_HMAC_SECRET`
+- `AUTH_DIRECTORY_BASE_URL`
+- `AUTH_DIRECTORY_SERVICE_SECRET`
+- `MASTER_KEY_B64`
+- `MASTER_KEY_VERSION`
 
-## Support
+## Notas de modelo
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+- `tenant_id` sigue existiendo en vaults, documents, tenant_keys y audit_logs
+- ya no hay dependencia estructural obligatoria a una tabla local `tenants`
+- la relación fuerte que sí permanece es `documents -> vaults`

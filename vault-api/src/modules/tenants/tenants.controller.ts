@@ -1,5 +1,5 @@
 import {
-  Body,
+  ConflictException,
   Controller,
   Get,
   Post,
@@ -7,10 +7,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { TenantsService } from './tenants.service';
-import { CreateTenantDto } from './dto/create-tenant.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import type { AuthUser } from '../../modules/auth/types/auth-user.type';
+import type { AuthUser } from '../../common/types/auth-user.type';
 
 @Controller('tenants')
 @UseGuards(JwtAuthGuard)
@@ -24,8 +23,10 @@ export class TenantsController {
   }
 
   @Post()
-  async create(@CurrentUser() user: AuthUser, @Body() dto: CreateTenantDto) {
+  async create(@CurrentUser() user: AuthUser) {
     if (!user?.id) throw new UnauthorizedException('missing user id');
-    return this.tenantsService.createOrgTenant(dto, user.id);
+    throw new ConflictException(
+      'Tenant creation is owned by auth-api. Create tenants through auth-api and let vault consume them via auth directory.',
+    );
   }
 }
