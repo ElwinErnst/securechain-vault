@@ -1,3 +1,5 @@
+import type { AnchorPayload } from '../types/anchor-payload.type';
+
 export type AnchorResult = {
   txHash: string;
   chainId: number;
@@ -5,10 +7,5 @@ export type AnchorResult = {
 };
 
 export interface AnchorClientPort {
-  anchorDocumentHash(opts: {
-    tenantId: string;
-    vaultId: string;
-    documentId: string;
-    sha256Hex: string;
-  }): Promise<AnchorResult>;
+  anchorDocumentHash(opts: AnchorPayload): Promise<AnchorResult>;
 }

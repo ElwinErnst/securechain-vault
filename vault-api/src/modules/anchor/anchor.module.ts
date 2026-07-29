@@ -4,12 +4,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { DocumentEntity } from 'src/database/entities/document.entity';
 import { StorageModule } from 'src/common/modules/storage/storage.module';
 
-import {
-  AnchorService,
-  ANCHOR_CLIENT,
-  type AnchorClientPort,
-} from './anchor.service';
+import { AnchorService, ANCHOR_CLIENT } from './anchor.service';
 import { PublicVerifyController } from './public-verify.controller';
+import type { AnchorClientPort } from './ports/anchor-client.port';
 
 // Cliente dummy para MVP (hasta que conectemos contrato real)
 class DummyAnchorClient implements AnchorClientPort {

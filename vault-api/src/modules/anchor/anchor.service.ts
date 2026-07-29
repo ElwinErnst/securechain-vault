@@ -1,36 +1,23 @@
 // src/modules/anchor/anchor.service.ts
-import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  ForbiddenException,
+  Inject,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
 import { Repository } from 'typeorm';
 
 import { DocumentEntity } from '../../database/entities/document.entity';
 import { StorageService } from '../../common/modules/storage/storage.service';
-
-/**
- * Resultado “mínimo” del anclado.
- * (Después lo podés persistir en DocumentEntity o en una tabla aparte.)
- */
-export type AnchorResult = {
-  txHash: string;
-  chainId: number;
-  anchoredAt: Date;
-};
-
-export type AnchorPayload = {
-  tenantId: string;
-  vaultId: string;
-  documentId: string;
-  sha256Hex: string;
-};
-
-/**
- * Puerto para desacoplar la blockchain (ethers, web3, http a otro servicio, etc.).
- * Importante: SIN any.
- */
-export interface AnchorClientPort {
-  anchorDocumentHash(payload: AnchorPayload): Promise<AnchorResult>;
-}
+import type { AnchorPayload } from './types/anchor-payload.type';
+import type { PublicVerifyResult } from './types/public-verify-result.type';
+import type {
+  AnchorClientPort,
+  AnchorResult,
+} from './ports/anchor-client.port';
 
 /**
  * Token de inyección para el cliente concreto (EthersAnchorClient, HttpAnchorClient, etc).
@@ -71,9 +58,8 @@ export class AnchorService {
    * Calcula SHA-256 del contenido actual en storage (MinIO).
    * Devuelve hex lowercase (64 chars).
    */
-  async computeDocumentSha256Hex(doc: DocumentEntity): Promise<string> {
-    const buf = await this.storage.getBuffer(doc.storageKey);
-    return this.sha256Hex(buf);
+  computeDocumentSha256Hex(doc: DocumentEntity): string {
+    return doc.sha256PlainHex;
   }
 
   /**
@@ -91,7 +77,7 @@ export class AnchorService {
   }> {
     const doc = await this.getDocOrThrow(opts.tenantId, opts.documentId);
 
-    const sha256Hex = await this.computeDocumentSha256Hex(doc);
+    const sha256Hex = this.computeDocumentSha256Hex(doc);
 
     const payload: AnchorPayload = {
       tenantId: doc.tenantId,
@@ -101,6 +87,13 @@ export class AnchorService {
     };
 
     const result = await this.anchorClient.anchorDocumentHash(payload);
+
+    doc.anchorStatus = 'ANCHORED';
+    doc.anchorTxHash = result.txHash;
+    doc.anchoredAt = result.anchoredAt;
+    doc.anchorChainId = result.chainId;
+    doc.anchorRetries = 0;
+    await this.docsRepo.save(doc);
 
     this.logger.log(
       `Anchored document ${doc.id} (tenant=${doc.tenantId}) tx=${result.txHash} chainId=${result.chainId}`,
@@ -126,11 +119,6 @@ export class AnchorService {
           tenantId: doc.tenantId,
           documentId: doc.id,
         });
-
-        // Anclado exitoso
-        doc.anchorStatus = 'ANCHORED';
-        doc.anchorRetries = 0;
-        await this.docsRepo.save(doc);
 
         processed++;
       } catch (err: unknown) {
@@ -184,13 +172,16 @@ export class AnchorService {
       throw new NotFoundException('Document not found');
     }
 
-    const currentSha256 = await this.computeDocumentSha256Hex(doc);
+    const currentSha256 = this.sha256Hex(
+      await this.storage.getBuffer(doc.storageKey),
+    );
+    const storedSha256 = doc.sha256CipherHex ?? doc.sha256PlainHex;
 
     if (!doc.anchorTxHash || !doc.anchoredAt) {
       return {
         status: 'NOT_ANCHORED',
         documentId: doc.id,
-        storedSha256: doc.sha256PlainHex,
+        storedSha256,
         currentSha256,
         anchorTxHash: null,
         anchoredAt: null,
@@ -201,11 +192,11 @@ export class AnchorService {
       };
     }
 
-    if (currentSha256 !== doc.sha256PlainHex) {
+    if (currentSha256 !== storedSha256) {
       return {
         status: 'MODIFIED',
         documentId: doc.id,
-        storedSha256: doc.sha256PlainHex,
+        storedSha256,
         currentSha256,
         anchorTxHash: doc.anchorTxHash,
         anchoredAt: doc.anchoredAt,
@@ -216,11 +207,32 @@ export class AnchorService {
     return {
       status: 'VALID',
       documentId: doc.id,
-      storedSha256: doc.sha256PlainHex,
+      storedSha256,
       currentSha256,
       anchorTxHash: doc.anchorTxHash,
       anchoredAt: doc.anchoredAt,
       reason: null,
+    };
+  }
+
+  async verifyDocumentPublic(documentId: string): Promise<PublicVerifyResult> {
+    const result = await this.verifyDocument(documentId);
+
+    if (!result.anchorTxHash || !result.anchoredAt) {
+      throw new NotFoundException('Public verification record not found');
+    }
+
+    if (result.status === 'NOT_ANCHORED') {
+      throw new ForbiddenException(
+        'Document is not available for public verification',
+      );
+    }
+
+    return {
+      status: result.status,
+      documentId: result.documentId,
+      anchorTxHash: result.anchorTxHash,
+      anchoredAt: result.anchoredAt,
     };
   }
 
