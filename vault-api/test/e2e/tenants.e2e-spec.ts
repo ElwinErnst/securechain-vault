@@ -5,7 +5,10 @@ import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
 import { parseBody } from '../utils/parse';
-import { TenantResponseSchema, TenantsListSchema } from '../utils/schemas/auth.schemas';
+import {
+  TenantResponseSchema,
+  TenantsListSchema,
+} from '../utils/schemas/auth.schemas';
 import { buildZtHeaders } from '../utils/zt';
 
 describe('Tenants e2e', () => {

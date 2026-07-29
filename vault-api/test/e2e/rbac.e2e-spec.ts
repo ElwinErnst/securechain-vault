@@ -35,8 +35,6 @@ class TestProtectedController {
 @Module({ controllers: [TestProtectedController] })
 class TestOnlyModule {}
 
-type LoginResponse = { accessToken: string };
-
 describe('RBAC e2e', () => {
   let app: INestApplication;
 

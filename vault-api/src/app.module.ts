@@ -17,6 +17,7 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { AccessControlModule } from './common/modules/access-control/access-control.module';
 import { AnchorModule } from './modules/anchor/anchor.module';
 import { AuthDirectoryModule } from './common/modules/auth-directory/auth-directory.module';
+import { NotaryModule } from './modules/notary/notary.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { AuthDirectoryModule } from './common/modules/auth-directory/auth-direct
     DocumentsModule,
     AccessControlModule,
     AnchorModule,
+    NotaryModule,
     AuthDirectoryModule,
   ],
   providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
