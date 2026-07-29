@@ -5,11 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { TenantMemberRole } from '../../../database/entities/tenant-member.entity';
 
 type AuthDirectoryConfig = {
   baseUrl: string;
   serviceSecret: string;
+  hmacSecret: string;
   timeoutMs: number;
 };
 
@@ -18,6 +20,41 @@ export type RemoteMembership = {
   tenantId: string;
   role: TenantMemberRole;
   isActive: boolean;
+};
+
+export type RemoteTenantEntitlements = {
+  planCode: string;
+  features: {
+    vaults: boolean;
+    ztPolicies: boolean;
+    digitalNotary: boolean;
+    auditExport: boolean;
+    customBranding: boolean;
+    sso: boolean;
+    apiAuth: boolean;
+    apiVault: boolean;
+    apiZeroTrust: boolean;
+  };
+  limits: {
+    maxVaults: number | null;
+    maxUsers: number | null;
+    auditRetentionDays: number | null;
+    monthlyNotaryRequests: number | null;
+  };
+  addonsAllowed: string[];
+  apiAddons: Array<'AUTH_API' | 'VAULT_API' | 'ZERO_TRUST_API'>;
+  source: 'catalog' | 'catalog_with_legacy_overrides' | 'legacy_defaults';
+};
+
+export type RemoteTenant = {
+  id: string;
+  name: string;
+  slug: string;
+  planCode: string | null;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  entitlements: RemoteTenantEntitlements;
 };
 
 export type RemoteUserTenant = {
@@ -60,6 +97,20 @@ export class AuthDirectoryService {
     return (await this.fetchJson<RemoteUserTenant[]>(url.toString())) ?? [];
   }
 
+  async getTenant(tenantId: string): Promise<RemoteTenant | null> {
+    const url = this.buildUrl(`internal/tenants/${tenantId}`);
+    return this.fetchJson<RemoteTenant>(url.toString(), { allow404: true });
+  }
+
+  async getTenantEntitlements(
+    tenantId: string,
+  ): Promise<RemoteTenantEntitlements | null> {
+    const url = this.buildUrl(`internal/tenants/${tenantId}/entitlements`);
+    return this.fetchJson<RemoteTenantEntitlements>(url.toString(), {
+      allow404: true,
+    });
+  }
+
   private buildUrl(path: string): URL {
     const base = this.cfg.baseUrl.endsWith('/')
       ? this.cfg.baseUrl
@@ -68,19 +119,49 @@ export class AuthDirectoryService {
     return new URL(path, base);
   }
 
+  private buildSignedHeaders(
+    method: string,
+    url: URL,
+    body?: string,
+  ): Record<string, string> {
+    const normalizedBody = body ?? '{}';
+    const ts = String(Date.now());
+    const nonce = randomUUID();
+    const bodySha256Hex = createHash('sha256')
+      .update(normalizedBody)
+      .digest('hex');
+    const canonical = [
+      method.toUpperCase(),
+      `${url.pathname}${url.search}`,
+      bodySha256Hex,
+      ts,
+      nonce,
+    ].join('\n');
+    const signature = createHmac('sha256', this.cfg.hmacSecret)
+      .update(canonical)
+      .digest('hex');
+
+    return {
+      'x-internal-service-secret': this.cfg.serviceSecret,
+      'x-internal-service-ts': ts,
+      'x-internal-service-nonce': nonce,
+      'x-internal-service-signature': signature,
+    };
+  }
+
   private async fetchJson<T>(
     url: string,
     options?: { allow404?: boolean },
   ): Promise<T | null> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.cfg.timeoutMs);
+    const parsedUrl = new URL(url);
+    const headers = this.buildSignedHeaders('GET', parsedUrl);
 
     try {
       const res = await fetch(url, {
         method: 'GET',
-        headers: {
-          'x-internal-service-secret': this.cfg.serviceSecret,
-        },
+        headers,
         signal: controller.signal,
       });
 

@@ -1,6 +1,18 @@
 import { registerAs } from '@nestjs/config';
 
+function readSecret(envName: string, fallback: string) {
+  const value = process.env[envName]?.trim();
+  if (value) return value;
+
+  const runtime = process.env.NODE_ENV ?? 'development';
+  if (runtime === 'development' || runtime === 'test') {
+    return fallback;
+  }
+
+  throw new Error(`${envName} must be configured outside development/test`);
+}
+
 export default registerAs('zt', () => ({
-  hmacSecret: process.env.ZT_HMAC_SECRET ?? 'change_me_zt_secret',
+  hmacSecret: readSecret('ZT_HMAC_SECRET', 'change_me_zt_secret'),
   maxClockSkewMs: Number(process.env.ZT_MAX_CLOCK_SKEW_MS ?? 30000),
 }));
