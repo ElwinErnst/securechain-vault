@@ -9,23 +9,14 @@ import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 
 import { TENANT_ROLES_KEY } from '../decorators/tenant-roles.decorator';
-import {
-  TenantMemberRole,
-} from '../../database/entities/tenant-member.entity';
+import { API_CLIENT_ALLOWED_KEY } from '../decorators/api-client-allowed.decorator';
+import { TenantMemberRole } from '../../database/entities/tenant-member.entity';
 import { hasAtLeastRole } from '../utils/tenant-role-hierarchy.util';
 
 import { AUDIT_META_KEY, AuditMeta } from '../decorators/audit.decorator';
 import { AuditService } from '../../modules/audit/audit.service';
 import { AuthDirectoryService } from '../modules/auth-directory/auth-directory.service';
-
-type ReqParams = Record<string, string>;
-type ReqBody = unknown;
-
-type Req = Request<ReqParams, unknown, ReqBody> & {
-  user?: { id: string };
-  tenantContext?: { tenantId: string };
-  tenantRole?: TenantMemberRole;
-};
+import type { TenantRequest } from '../types/tenant-request.type';
 
 function getHeader(req: Request, name: string): string | undefined {
   const v = req.headers[name.toLowerCase()];
@@ -51,6 +42,10 @@ function resolvePath(req: Request): string {
   return base || '';
 }
 
+function isApiClient(user: TenantRequest['user']): boolean {
+  return Array.isArray(user?.roles) && user.roles.includes('API_CLIENT');
+}
+
 @Injectable()
 export class TenantRbacGuard implements CanActivate {
   constructor(
@@ -60,7 +55,7 @@ export class TenantRbacGuard implements CanActivate {
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const req = ctx.switchToHttp().getRequest<Req>();
+    const req = ctx.switchToHttp().getRequest<TenantRequest>();
     const required =
       this.reflector.getAllAndOverride<TenantMemberRole[]>(TENANT_ROLES_KEY, [
         ctx.getHandler(),
@@ -79,6 +74,22 @@ export class TenantRbacGuard implements CanActivate {
 
     if (!userId) {
       throw new ForbiddenException('Missing auth user');
+    }
+
+    if (isApiClient(req.user)) {
+      const apiClientAllowed =
+        this.reflector.getAllAndOverride<boolean>(API_CLIENT_ALLOWED_KEY, [
+          ctx.getHandler(),
+          ctx.getClass(),
+        ]) ?? false;
+
+      if (apiClientAllowed) {
+        return true;
+      }
+
+      throw new ForbiddenException(
+        'API clients are not allowed on this tenant route',
+      );
     }
 
     const membership = await this.authDirectory.getMembership(userId, tenantId);

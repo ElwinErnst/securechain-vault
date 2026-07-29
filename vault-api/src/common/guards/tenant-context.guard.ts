@@ -5,14 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { isUUID } from 'class-validator';
-import type { AuthUser } from '../types/auth-user.type';
-
-type TenantContext = { tenantId: string };
-
-type TenantRequest = {
-  user?: AuthUser;
-  tenantContext?: TenantContext;
-};
+import type { TenantRequest } from '../types/tenant-request.type';
 
 @Injectable()
 export class TenantContextGuard implements CanActivate {

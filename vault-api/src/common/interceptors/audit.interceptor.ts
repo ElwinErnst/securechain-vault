@@ -11,14 +11,7 @@ import type { Request, Response } from 'express';
 
 import { AuditService } from '../../modules/audit/audit.service';
 import { AUDIT_META_KEY, AuditMeta } from '../decorators/audit.decorator';
-
-type ReqParams = Record<string, string>;
-type ReqBody = unknown;
-
-type RequestWithContext = Request<ReqParams, unknown, ReqBody> & {
-  tenantContext?: { tenantId: string };
-  user?: { id: string };
-};
+import type { RequestWithContext } from '../types/request-with-context.type';
 
 function safeGet(obj: unknown, path: string): unknown {
   const parts = path.split('.').filter(Boolean);
