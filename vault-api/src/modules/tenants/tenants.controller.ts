@@ -23,7 +23,7 @@ export class TenantsController {
   }
 
   @Post()
-  async create(@CurrentUser() user: AuthUser) {
+  create(@CurrentUser() user: AuthUser) {
     if (!user?.id) throw new UnauthorizedException('missing user id');
     throw new ConflictException(
       'Tenant creation is owned by auth-api. Create tenants through auth-api and let vault consume them via auth directory.',

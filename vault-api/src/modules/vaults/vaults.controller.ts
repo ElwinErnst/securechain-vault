@@ -15,6 +15,7 @@ import { TenantContextGuard } from '../../common/guards/tenant-context.guard';
 import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { TenantRoles } from '../../common/decorators/tenant-roles.decorator';
 import { TenantRbacGuard } from '../../common/guards/tenant-rbac.guard';
+import { ApiClientAllowed } from '../../common/decorators/api-client-allowed.decorator';
 
 import { VaultsService } from './vaults.service';
 import { CreateVaultDto } from './dto/create-vault.dto';
@@ -45,6 +46,7 @@ export class VaultsController {
   }
 
   @Get()
+  @ApiClientAllowed()
   @TenantRoles(TenantMemberRole.MEMBER)
   @Audit({
     action: 'VAULT_LIST',

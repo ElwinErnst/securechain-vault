@@ -15,6 +15,12 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import type { Response } from 'express';
+import { diskStorage } from 'multer';
+import { mkdirSync } from 'fs';
+import { unlink } from 'fs/promises';
+import { randomUUID } from 'crypto';
+import { extname, join } from 'path';
+import { tmpdir } from 'os';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantContextGuard } from '../../common/guards/tenant-context.guard';
@@ -23,9 +29,12 @@ import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { TenantRoles } from '../../common/decorators/tenant-roles.decorator';
 import { TenantMemberRole } from '../../database/entities/tenant-member.entity';
+import { ApiClientAllowed } from '../../common/decorators/api-client-allowed.decorator';
 
 import { DocumentsService } from './documents.service';
 import { Audit } from '../../common/decorators/audit.decorator';
+
+const UPLOAD_TMP_DIR = join(tmpdir(), 'vault-api-uploads');
 
 const UploadQuerySchema = z.object({
   vaultId: z.string().uuid(),
@@ -57,6 +66,16 @@ function isAllowedMime(
   return allowed.includes(mime);
 }
 
+function ensureUploadTempDir(): string {
+  mkdirSync(UPLOAD_TMP_DIR, { recursive: true });
+  return UPLOAD_TMP_DIR;
+}
+
+function buildTempFilename(file: Express.Multer.File): string {
+  const extension = extname(file.originalname ?? '').slice(0, 16);
+  return `${randomUUID()}${extension}`;
+}
+
 @Controller()
 @UseGuards(JwtAuthGuard, TenantContextGuard, TenantRbacGuard)
 export class DocumentsController {
@@ -66,6 +85,7 @@ export class DocumentsController {
   ) {}
 
   @Post('/documents')
+  @ApiClientAllowed()
   @TenantRoles(TenantMemberRole.ADMIN)
   @Audit({
     action: 'DOCUMENT_UPLOAD',
@@ -74,6 +94,10 @@ export class DocumentsController {
   })
   @UseInterceptors(
     FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (_req, _file, cb) => cb(null, ensureUploadTempDir()),
+        filename: (_req, file, cb) => cb(null, buildTempFilename(file)),
+      }),
       limits: { fileSize: DEFAULT_MAX_BYTES },
       fileFilter: (
         _req: unknown,
@@ -125,32 +149,39 @@ export class DocumentsController {
       );
     }
 
-    const doc = await this.docs.upload({
-      tenantId,
-      userId: user.id,
-      vaultId: parsedQuery.data.vaultId,
-      name: parsedQuery.data.name,
-      file: {
-        originalname: file.originalname,
-        mimetype: file.mimetype,
-        size: file.size,
-        buffer: file.buffer,
-      },
-    });
+    try {
+      const doc = await this.docs.upload({
+        tenantId,
+        userId: user.id,
+        vaultId: parsedQuery.data.vaultId,
+        name: parsedQuery.data.name,
+        file: {
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          size: file.size,
+          path: file.path,
+        },
+      });
 
-    return {
-      id: doc.id,
-      tenantId: doc.tenantId,
-      vaultId: doc.vaultId,
-      originalName: doc.originalName,
-      storedName: doc.storedName,
-      mime: doc.mime,
-      sizeBytes: doc.sizeBytes,
-      createdAt: doc.createdAt.toISOString(),
-    };
+      return {
+        id: doc.id,
+        tenantId: doc.tenantId,
+        vaultId: doc.vaultId,
+        originalName: doc.originalName,
+        storedName: doc.storedName,
+        mime: doc.mime,
+        sizeBytes: doc.sizeBytes,
+        createdAt: doc.createdAt.toISOString(),
+      };
+    } finally {
+      if (file.path) {
+        await unlink(file.path).catch(() => undefined);
+      }
+    }
   }
 
   @Get('/documents')
+  @ApiClientAllowed()
   @TenantRoles(TenantMemberRole.MEMBER)
   @Audit({ action: 'DOCUMENT_LIST', resourceType: 'document' })
   async list(@TenantId() tenantId: string, @Query() query: unknown) {
@@ -174,6 +205,7 @@ export class DocumentsController {
   }
 
   @Get('/documents/:id/download')
+  @ApiClientAllowed()
   @TenantRoles(TenantMemberRole.MEMBER)
   @Audit({
     action: 'DOCUMENT_DOWNLOAD',

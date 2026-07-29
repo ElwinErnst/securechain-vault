@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { DocumentEntity } from '../../database/entities/document.entity';
 import { CreateVaultDto } from './dto/create-vault.dto';
 import { VaultDto } from './dto/vault.dto';
 import { slugify } from '../../common/utils/slugify.util';
+import { AuthDirectoryService } from '../../common/modules/auth-directory/auth-directory.service';
 
 @Injectable()
 export class VaultsService {
@@ -19,9 +21,31 @@ export class VaultsService {
     private readonly vaultRepo: Repository<VaultEntity>,
     @InjectRepository(DocumentEntity)
     private readonly docsRepo: Repository<DocumentEntity>,
+    private readonly authDirectory: AuthDirectoryService,
   ) {}
 
   async create(tenantId: string, dto: CreateVaultDto): Promise<VaultDto> {
+    const tenant = await this.authDirectory.getTenant(tenantId);
+    if (!tenant || !tenant.isActive) {
+      throw new NotFoundException('Tenant not found');
+    }
+
+    const entitlements = tenant.entitlements;
+    if (!entitlements.features.vaults) {
+      throw new ForbiddenException(
+        'Vaults are not enabled for this tenant plan',
+      );
+    }
+
+    if (typeof entitlements.limits.maxVaults === 'number') {
+      const currentVaults = await this.vaultRepo.count({ where: { tenantId } });
+      if (currentVaults >= entitlements.limits.maxVaults) {
+        throw new ConflictException(
+          `Vault limit reached for plan ${entitlements.planCode}`,
+        );
+      }
+    }
+
     const slug = (
       dto.slug?.trim().length ? dto.slug : slugify(dto.name)
     ).trim();

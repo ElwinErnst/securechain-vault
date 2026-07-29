@@ -6,8 +6,11 @@ import { VaultEntity } from '../../database/entities/vault.entity';
 import { TenantKeyEntity } from '../../database/entities/tenant-key.entity';
 import { StorageService } from '../../common/modules/storage/storage.service';
 import { CryptoService } from '../../common/modules/crypto/crypto.service';
-import { Readable } from 'stream';
 import { createHash } from 'crypto';
+import { Readable, Transform } from 'stream';
+import { createReadStream } from 'fs';
+import { pipeline } from 'stream/promises';
+import type { UploadDocumentOptions } from './types/upload-document-options.type';
 
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180);
@@ -71,18 +74,7 @@ export class DocumentsService {
     });
   }
 
-  async upload(opts: {
-    tenantId: string;
-    userId: string;
-    vaultId: string;
-    file: {
-      originalname: string;
-      mimetype: string;
-      size: number;
-      buffer: Buffer;
-    };
-    name?: string;
-  }): Promise<DocumentEntity> {
+  async upload(opts: UploadDocumentOptions): Promise<DocumentEntity> {
     const vault = await this.vaultsRepo.findOne({
       where: { id: opts.vaultId, tenantId: opts.tenantId },
       select: { id: true },
@@ -107,36 +99,47 @@ export class DocumentsService {
     const dek = await this.getOrCreateTenantDek(opts.tenantId);
 
     const { cipher, ivB64, getTagB64 } = this.crypto.encryptStream(dek);
+    const storageUpload = this.storage.createWritableStream(
+      storageKey,
+      opts.file.mimetype,
+      opts.file.size,
+    );
+    const plainHash = createHash('sha256');
+    const cipherHash = createHash('sha256');
 
-    const inputStream: Readable = Readable.from(opts.file.buffer);
-
-    // Buffer the encrypted stream to get its full size before uploading
-    const encryptedChunks: Uint8Array[] = [];
-    const encryptAndBuffer = new Promise<void>((resolve, reject) => {
-      inputStream
-        .pipe(cipher)
-        .on('data', (chunk: Uint8Array) => encryptedChunks.push(chunk))
-        .on('end', () => resolve())
-        .on('error', reject);
+    const plainHashTap = new Transform({
+      transform(chunk, _encoding, callback) {
+        const bufferChunk = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk as Uint8Array);
+        plainHash.update(bufferChunk);
+        callback(null, bufferChunk);
+      },
+    });
+    const cipherHashTap = new Transform({
+      transform(chunk, _encoding, callback) {
+        const bufferChunk = Buffer.isBuffer(chunk)
+          ? chunk
+          : Buffer.from(chunk as Uint8Array);
+        cipherHash.update(bufferChunk);
+        callback(null, bufferChunk);
+      },
     });
 
-    await encryptAndBuffer;
+    await Promise.all([
+      pipeline(
+        createReadStream(opts.file.path),
+        plainHashTap,
+        cipher,
+        cipherHashTap,
+        storageUpload.writable,
+      ),
+      storageUpload.done,
+    ]);
 
-    const encryptedBuffer = Buffer.concat(encryptedChunks);
     const tagB64 = getTagB64();
-
-    // Upload using storage service
-    await this.storage.saveBuffer({
-      tenantId: opts.tenantId,
-      vaultId: opts.vaultId,
-      filename: storedName,
-      buffer: encryptedBuffer,
-      mime: opts.file.mimetype,
-    });
-
-    const sha256PlainHex = createHash('sha256')
-      .update(opts.file.buffer)
-      .digest('hex');
+    const sha256PlainHex = plainHash.digest('hex');
+    const sha256CipherHex = cipherHash.digest('hex');
 
     const row = this.docsRepo.create({
       tenantId: opts.tenantId,
@@ -150,6 +153,7 @@ export class DocumentsService {
       encTagB64: tagB64,
       encKeyVersion: 1,
       sha256PlainHex,
+      sha256CipherHex,
       anchorStatus: 'PENDING',
     });
 

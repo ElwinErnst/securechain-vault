@@ -25,10 +25,10 @@ export class TenantsService {
       }));
   }
 
-  async createOrgTenant(
+  createOrgTenant(
     dto: CreateTenantDto,
     ownerUserId: string,
-  ): Promise<TenantResponseDto> {
+  ): TenantResponseDto {
     void dto;
     void ownerUserId;
     throw new NotImplementedException(
