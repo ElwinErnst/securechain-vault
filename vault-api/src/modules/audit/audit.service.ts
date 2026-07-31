@@ -45,10 +45,16 @@ export class AuditService {
     return this.dataSource.transaction(async (manager) => {
       const r = manager.getRepository(AuditLogEntity);
 
-      // Tomamos el último evento del scope con lock de escritura
+      // Serialize writes within this scope BEFORE reading `last`, so two
+      // concurrent transactions never both read seq=N and both insert seq=N+1
+      // (which would race on the (scope, seq) unique constraint).
+      // hashtext(scope) fits in int32; pg_advisory_xact_lock releases at COMMIT.
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        scope,
+      ]);
+
       const last = await r
         .createQueryBuilder('a')
-        .setLock('pessimistic_write')
         .where('a.scope = :scope', { scope })
         .orderBy('a.seq', 'DESC')
         .limit(1)
