@@ -5,7 +5,11 @@ import {
   AuditLogEntity,
   AuditOutcome,
 } from '../../database/entities/audit-log.entity';
-import { sha256Hex, stableStringify } from '../../common/utils/audit-hash.util';
+import {
+  AuditEventFields,
+  computeChainHash,
+  computeEventHash,
+} from '../../common/utils/audit-canonical.util';
 
 export type CreateAuditLogInput = {
   tenantId: string | null;
@@ -63,9 +67,9 @@ export class AuditService {
       const nextSeq = last ? (BigInt(last.seq) + 1n).toString() : '1';
       const prevHash = last?.chainHash ?? null;
 
-      // Construimos payload estable para el eventHash
-      // OJO: NO incluir datos sensibles ni objetos enormes
-      const eventPayload = {
+      // Canonical event fields — same source of truth the verifier recomputes
+      // from. OJO: NO incluir datos sensibles ni objetos enormes.
+      const fields: AuditEventFields = {
         scope,
         seq: nextSeq,
         tenantId: input.tenantId,
@@ -82,8 +86,8 @@ export class AuditService {
         metadata: input.metadata,
       };
 
-      const eventHash = sha256Hex(stableStringify(eventPayload));
-      const chainHash = sha256Hex(`${prevHash ?? ''}|${eventHash}`);
+      const eventHash = computeEventHash(fields);
+      const chainHash = computeChainHash(prevHash, eventHash);
 
       const row = r.create({
         ...input,
