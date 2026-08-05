@@ -9,6 +9,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AuditReaderService } from './audit-reader.service';
+import { AuditVerifierService } from './audit-verifier.service';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { RoleName } from 'src/database/entities/role.entity';
@@ -16,7 +17,10 @@ import { RoleName } from 'src/database/entities/role.entity';
 @Controller('admin/audit-logs')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AuditGlobalController {
-  constructor(private readonly reader: AuditReaderService) {}
+  constructor(
+    private readonly reader: AuditReaderService,
+    private readonly verifier: AuditVerifierService,
+  ) {}
 
   @Get()
   @Roles(RoleName.AUDITOR, RoleName.ADMIN)
@@ -28,5 +32,15 @@ export class AuditGlobalController {
     q.page = page;
     q.limit = limit;
     return this.reader.search({ tenantId: null, q });
+  }
+
+  /**
+   * Verify the integrity of any chain by scope. Defaults to the GLOBAL chain
+   * (scope used for tenant-less actions); pass ?scope=<tenantId> for a tenant.
+   */
+  @Get('verify')
+  @Roles(RoleName.AUDITOR, RoleName.ADMIN)
+  verify(@Query('scope', new DefaultValuePipe('GLOBAL')) scope: string) {
+    return this.verifier.verifyScope(scope);
   }
 }
