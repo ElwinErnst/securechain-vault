@@ -58,11 +58,27 @@ export function initialChainState(): ChainState {
   return { checked: 0, prevChainHash: null, headSeq: null, expectedSeq: 1n };
 }
 
-type StepOk = { ok: true; state: ChainState };
-type StepFail = { ok: false; firstBreak: ChainBreak };
+/**
+ * Result of verifying one row. Deliberately a single type (not a discriminated
+ * union): the production Docker build compiles this module without the base
+ * tsconfig's `strictNullChecks`, and discriminated-union narrowing (`if (!res.ok)`)
+ * does not hold without it. A plain `firstBreak: ChainBreak | null` check works
+ * under both strict and non-strict compilation.
+ */
+export type StepResult = {
+  /** Advanced state — meaningful only when `firstBreak` is null. */
+  state: ChainState;
+  /** First inconsistency at this row, or null when the row verifies. */
+  firstBreak: ChainBreak | null;
+};
 
-function fail(seq: string, reason: ChainBreakReason, detail: string): StepFail {
-  return { ok: false, firstBreak: { seq, reason, detail } };
+function fail(
+  state: ChainState,
+  seq: string,
+  reason: ChainBreakReason,
+  detail: string,
+): StepResult {
+  return { state, firstBreak: { seq, reason, detail } };
 }
 
 /**
@@ -74,12 +90,13 @@ function fail(seq: string, reason: ChainBreakReason, detail: string): StepFail {
  * verifies as VALID. Detecting suffix truncation requires an external anchored
  * checkpoint of {scope, seq, headHash}; the internal chain alone cannot.
  */
-export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
+export function stepChain(state: ChainState, row: ChainRow): StepResult {
   const isGenesis = state.checked === 0;
 
   if (isGenesis) {
     if (row.seq !== '1' || row.prevHash !== null) {
       return fail(
+        state,
         row.seq,
         'BAD_GENESIS',
         `first row of scope must have seq=1 and prevHash=null; got seq=${row.seq}, prevHash=${row.prevHash ?? 'null'}`,
@@ -88,6 +105,7 @@ export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
   } else {
     if (row.seq !== state.expectedSeq.toString()) {
       return fail(
+        state,
         row.seq,
         'SEQ_GAP',
         `expected seq=${state.expectedSeq.toString()}, got seq=${row.seq}`,
@@ -95,6 +113,7 @@ export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
     }
     if (row.prevHash !== state.prevChainHash) {
       return fail(
+        state,
         row.seq,
         'PREV_HASH_MISMATCH',
         `prevHash does not match the previous row's chainHash`,
@@ -105,6 +124,7 @@ export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
   const eventHash = computeEventHash(row);
   if (eventHash !== row.eventHash) {
     return fail(
+      state,
       row.seq,
       'EVENT_HASH_MISMATCH',
       `row contents were altered: recomputed eventHash differs from stored`,
@@ -114,6 +134,7 @@ export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
   const chainHash = computeChainHash(row.prevHash, eventHash);
   if (chainHash !== row.chainHash) {
     return fail(
+      state,
       row.seq,
       'CHAIN_HASH_MISMATCH',
       `stored chainHash is inconsistent with prevHash|eventHash`,
@@ -121,13 +142,13 @@ export function stepChain(state: ChainState, row: ChainRow): StepOk | StepFail {
   }
 
   return {
-    ok: true,
     state: {
       checked: state.checked + 1,
       prevChainHash: row.chainHash,
       headSeq: row.seq,
       expectedSeq: BigInt(row.seq) + 1n,
     },
+    firstBreak: null,
   };
 }
 
@@ -141,7 +162,7 @@ export function verifyChainRows(scope: string, rows: ChainRow[]): ChainVerifyRes
 
   for (const row of rows) {
     const res = stepChain(state, row);
-    if (!res.ok) {
+    if (res.firstBreak) {
       return {
         scope,
         status: 'BROKEN',

@@ -42,7 +42,7 @@ export class AuditVerifierService {
 
       for (const row of rows) {
         const res = stepChain(state, row);
-        if (!res.ok) {
+        if (res.firstBreak) {
           return {
             scope,
             status: 'BROKEN',
