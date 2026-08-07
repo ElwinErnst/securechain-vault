@@ -7,8 +7,7 @@ import {
 } from '../../database/entities/audit-log.entity';
 import {
   AuditEventFields,
-  computeChainHash,
-  computeEventHash,
+  currentSerializer,
 } from '../../common/utils/audit-canonical.util';
 
 export type CreateAuditLogInput = {
@@ -86,8 +85,12 @@ export class AuditService {
         metadata: input.metadata,
       };
 
-      const eventHash = computeEventHash(fields);
-      const chainHash = computeChainHash(prevHash, eventHash);
+      // Stamp the row with the current serializer's version + algorithm so the
+      // verifier later recomputes with the same rule, even if the canonical
+      // serialization changes in a future version.
+      const serializer = currentSerializer();
+      const eventHash = serializer.computeEventHash(fields);
+      const chainHash = serializer.computeChainHash(prevHash, eventHash);
 
       const row = r.create({
         ...input,
@@ -96,6 +99,8 @@ export class AuditService {
         prevHash,
         eventHash,
         chainHash,
+        schemaVersion: serializer.version,
+        hashAlg: serializer.hashAlg,
       });
 
       return r.save(row);

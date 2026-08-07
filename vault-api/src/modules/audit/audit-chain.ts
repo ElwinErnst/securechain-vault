@@ -1,23 +1,31 @@
 import {
   AuditEventFields,
-  computeChainHash,
-  computeEventHash,
+  AuditSerializer,
+  getAuditSerializer,
 } from '../../common/utils/audit-canonical.util';
 
 /**
  * A stored audit row as far as chain verification is concerned: the canonical
- * event fields plus the three persisted hashes.
+ * event fields, the three persisted hashes, and the versioning metadata that
+ * selects which serializer verifies the row.
  */
 export type ChainRow = AuditEventFields & {
   prevHash: string | null;
   eventHash: string;
   chainHash: string;
+  schemaVersion: number;
+  hashAlg: string;
 };
+
+/** Resolves the serializer for a row's schema version (null if unknown). */
+export type SerializerResolver = (version: number) => AuditSerializer | null;
 
 export type ChainBreakReason =
   | 'BAD_GENESIS' // first row of the scope is not seq=1 / prevHash=null (front truncation)
   | 'SEQ_GAP' // a row is missing in the middle (interior deletion)
   | 'PREV_HASH_MISMATCH' // link does not point at the previous row's chainHash
+  | 'UNKNOWN_SCHEMA_VERSION' // no serializer registered for the row's schemaVersion
+  | 'HASH_ALG_MISMATCH' // stored hashAlg disagrees with the version's serializer
   | 'EVENT_HASH_MISMATCH' // row contents were altered (recomputed eventHash differs)
   | 'CHAIN_HASH_MISMATCH'; // stored chainHash is inconsistent with prevHash|eventHash
 
@@ -90,7 +98,11 @@ function fail(
  * verifies as VALID. Detecting suffix truncation requires an external anchored
  * checkpoint of {scope, seq, headHash}; the internal chain alone cannot.
  */
-export function stepChain(state: ChainState, row: ChainRow): StepResult {
+export function stepChain(
+  state: ChainState,
+  row: ChainRow,
+  resolve: SerializerResolver = getAuditSerializer,
+): StepResult {
   const isGenesis = state.checked === 0;
 
   if (isGenesis) {
@@ -121,7 +133,26 @@ export function stepChain(state: ChainState, row: ChainRow): StepResult {
     }
   }
 
-  const eventHash = computeEventHash(row);
+  // Verify each row with the serializer it was written under, not today's.
+  const serializer = resolve(row.schemaVersion);
+  if (!serializer) {
+    return fail(
+      state,
+      row.seq,
+      'UNKNOWN_SCHEMA_VERSION',
+      `no serializer registered for schema version ${row.schemaVersion}`,
+    );
+  }
+  if (serializer.hashAlg !== row.hashAlg) {
+    return fail(
+      state,
+      row.seq,
+      'HASH_ALG_MISMATCH',
+      `stored hashAlg '${row.hashAlg}' does not match version ${row.schemaVersion} serializer hashAlg '${serializer.hashAlg}'`,
+    );
+  }
+
+  const eventHash = serializer.computeEventHash(row);
   if (eventHash !== row.eventHash) {
     return fail(
       state,
@@ -131,7 +162,7 @@ export function stepChain(state: ChainState, row: ChainRow): StepResult {
     );
   }
 
-  const chainHash = computeChainHash(row.prevHash, eventHash);
+  const chainHash = serializer.computeChainHash(row.prevHash, eventHash);
   if (chainHash !== row.chainHash) {
     return fail(
       state,
@@ -157,11 +188,15 @@ export function stepChain(state: ChainState, row: ChainRow): StepResult {
  * stepChain for small scopes and unit tests. Large scopes should stream batches
  * through stepChain instead.
  */
-export function verifyChainRows(scope: string, rows: ChainRow[]): ChainVerifyResult {
+export function verifyChainRows(
+  scope: string,
+  rows: ChainRow[],
+  resolve: SerializerResolver = getAuditSerializer,
+): ChainVerifyResult {
   let state = initialChainState();
 
   for (const row of rows) {
-    const res = stepChain(state, row);
+    const res = stepChain(state, row, resolve);
     if (res.firstBreak) {
       return {
         scope,

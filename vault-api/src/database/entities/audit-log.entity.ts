@@ -83,6 +83,17 @@ export class AuditLogEntity {
   @Column({ type: 'char', length: 64, name: 'chain_hash' })
   chainHash!: string;
 
+  /**
+   * Serialization/algorithm the row was written under. The verifier reads these
+   * to recompute the hashes with the contemporaneous rule instead of today's,
+   * so a future serialization change never invalidates existing rows.
+   */
+  @Column({ type: 'int', name: 'schema_version', default: 1 })
+  schemaVersion!: number;
+
+  @Column({ type: 'varchar', length: 20, name: 'hash_alg', default: 'sha256' })
+  hashAlg!: string;
+
   @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
   createdAt!: Date;
 }
