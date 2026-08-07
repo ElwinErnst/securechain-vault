@@ -1,17 +1,20 @@
 import {
   AuditEventFields,
+  AuditSerializer,
   computeChainHash,
   computeEventHash,
+  getAuditSerializer,
 } from '../../common/utils/audit-canonical.util';
-import { ChainRow, verifyChainRows } from './audit-chain';
+import { ChainRow, SerializerResolver, verifyChainRows } from './audit-chain';
 
 const SCOPE = 'tenant-A';
 
-/** Build a well-formed row: hashes are computed exactly like the writer does. */
+/** Build a well-formed v1 row: hashes are computed exactly like the writer does. */
 function makeRow(
   seq: string,
   prevHash: string | null,
   overrides: Partial<AuditEventFields> = {},
+  meta: { schemaVersion?: number; hashAlg?: string } = {},
 ): ChainRow {
   const fields: AuditEventFields = {
     scope: SCOPE,
@@ -32,7 +35,14 @@ function makeRow(
   };
   const eventHash = computeEventHash(fields);
   const chainHash = computeChainHash(prevHash, eventHash);
-  return { ...fields, prevHash, eventHash, chainHash };
+  return {
+    ...fields,
+    prevHash,
+    eventHash,
+    chainHash,
+    schemaVersion: meta.schemaVersion ?? 1,
+    hashAlg: meta.hashAlg ?? 'sha256',
+  };
 }
 
 /** A valid 3-row chain. */
@@ -113,5 +123,69 @@ describe('verifyChainRows', () => {
     const res = verifyChainRows(SCOPE, [r1, r2]);
     expect(res.status).toBe('VALID');
     expect(res.headSeq).toBe('2');
+  });
+});
+
+describe('verifyChainRows — schema/algorithm versioning', () => {
+  it('rejects a row whose schema version has no registered serializer', () => {
+    const row = makeRow('1', null, {}, { schemaVersion: 2 });
+    const res = verifyChainRows(SCOPE, [row]);
+    expect(res.status).toBe('BROKEN');
+    expect(res.firstBreak?.reason).toBe('UNKNOWN_SCHEMA_VERSION');
+    expect(res.firstBreak?.seq).toBe('1');
+  });
+
+  it('rejects a row whose stored hashAlg disagrees with its version serializer', () => {
+    const row = makeRow('1', null, {}, { hashAlg: 'sha512' }); // v1 serializer is sha256
+    const res = verifyChainRows(SCOPE, [row]);
+    expect(res.status).toBe('BROKEN');
+    expect(res.firstBreak?.reason).toBe('HASH_ALG_MISMATCH');
+    expect(res.firstBreak?.seq).toBe('1');
+  });
+
+  // Crypto-agility: a row written under a different serializer verifies with
+  // THAT serializer, not today's. Proves the verifier dispatches by version.
+  it('verifies a row against its own version serializer via the resolver', () => {
+    const fakeV2: AuditSerializer = {
+      version: 2,
+      hashAlg: 'sha256-v2',
+      computeEventHash: (f) => `v2:${computeEventHash(f)}`,
+      computeChainHash: (prev, ev) => `v2:${computeChainHash(prev, ev)}`,
+    };
+    const resolve: SerializerResolver = (v) =>
+      v === 2 ? fakeV2 : getAuditSerializer(v);
+
+    const fields: AuditEventFields = {
+      scope: SCOPE,
+      seq: '1',
+      tenantId: SCOPE,
+      userId: 'user-1',
+      action: 'DOCUMENT_READ',
+      resourceType: 'document',
+      resourceId: 'doc-1',
+      outcome: 'SUCCESS',
+      httpStatus: 200,
+      httpMethod: 'GET',
+      httpPath: '/documents/doc-1',
+      ip: null,
+      userAgent: null,
+      metadata: null,
+    };
+    const eventHash = fakeV2.computeEventHash(fields);
+    const v2Row: ChainRow = {
+      ...fields,
+      prevHash: null,
+      eventHash,
+      chainHash: fakeV2.computeChainHash(null, eventHash),
+      schemaVersion: 2,
+      hashAlg: fakeV2.hashAlg,
+    };
+
+    // With the v2-aware resolver it verifies…
+    expect(verifyChainRows(SCOPE, [v2Row], resolve).status).toBe('VALID');
+    // …but the default resolver only knows v1, so the same row is rejected.
+    expect(verifyChainRows(SCOPE, [v2Row]).firstBreak?.reason).toBe(
+      'UNKNOWN_SCHEMA_VERSION',
+    );
   });
 });
