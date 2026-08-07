@@ -1,3 +1,7 @@
 {
+  "scripts": {
+    "db:upgrade": "docker compose --profile tools run --rm db_upgrade",
+    "test:audit-append-only": "./postgres/test-audit-append-only.sh"
+  },
   "dependencies": {}
 }
