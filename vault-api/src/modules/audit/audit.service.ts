@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import {
   AuditLogEntity,
   AuditOutcome,
@@ -9,6 +10,7 @@ import {
   AuditEventFields,
   currentSerializer,
 } from '../../common/utils/audit-canonical.util';
+import { normalizeJsonForStorage } from '../../common/utils/audit-hash.util';
 
 export type CreateAuditLogInput = {
   tenantId: string | null;
@@ -65,10 +67,20 @@ export class AuditService {
 
       const nextSeq = last ? (BigInt(last.seq) + 1n).toString() : '1';
       const prevHash = last?.chainHash ?? null;
+      // Assign DB-visible identity and time before hashing. Postgres stores
+      // these exact values, so later edits to either field are detectable.
+      const id = randomUUID();
+      const createdAt = new Date();
+      const metadata =
+        input.metadata === null
+          ? null
+          : normalizeJsonForStorage(input.metadata);
 
       // Canonical event fields — same source of truth the verifier recomputes
       // from. OJO: NO incluir datos sensibles ni objetos enormes.
       const fields: AuditEventFields = {
+        id,
+        createdAt,
         scope,
         seq: nextSeq,
         tenantId: input.tenantId,
@@ -82,7 +94,7 @@ export class AuditService {
         httpPath: input.httpPath,
         ip: input.ip,
         userAgent: input.userAgent,
-        metadata: input.metadata,
+        metadata,
       };
 
       // Stamp the row with the current serializer's version + algorithm so the
@@ -93,7 +105,10 @@ export class AuditService {
       const chainHash = serializer.computeChainHash(prevHash, eventHash);
 
       const row = r.create({
+        id,
+        createdAt,
         ...input,
+        metadata,
         scope,
         seq: nextSeq,
         prevHash,

@@ -1,4 +1,9 @@
-import { sha256Hex, stableStringify } from './audit-hash.util';
+import {
+  legacyStableStringify,
+  normalizeJsonForStorage,
+  sha256Hex,
+  stableStringify,
+} from './audit-hash.util';
 
 export type AuditOutcome = 'SUCCESS' | 'FAILURE';
 
@@ -16,6 +21,10 @@ export type AuditOutcome = 'SUCCESS' | 'FAILURE';
  * verification. See the serializer registry below.
  */
 export type AuditEventFields = {
+  /** Application-assigned identity; required by v2, absent from historical v1 rows. */
+  id?: string;
+  /** ISO-8601 instant assigned once by the application; required by v2. */
+  createdAt?: string | Date;
   scope: string;
   seq: string; // bigint as string
   tenantId: string | null;
@@ -54,7 +63,9 @@ export type AuditSerializer = {
  * Field order is irrelevant (`stableStringify` sorts keys); the field SET and
  * values are what the hash commits to.
  */
-function buildAuditEventPayloadV1(f: AuditEventFields): Record<string, unknown> {
+function buildAuditEventPayloadV1(
+  f: AuditEventFields,
+): Record<string, unknown> {
   return {
     scope: f.scope,
     seq: f.seq,
@@ -77,7 +88,71 @@ const V1: AuditSerializer = {
   version: 1,
   hashAlg: 'sha256',
   computeEventHash(f) {
-    return sha256Hex(stableStringify(buildAuditEventPayloadV1(f)));
+    return sha256Hex(legacyStableStringify(buildAuditEventPayloadV1(f)));
+  },
+  computeChainHash(prevHash, eventHash) {
+    return sha256Hex(`${prevHash ?? ''}|${eventHash}`);
+  },
+};
+
+function buildAuditEventPayloadV2(
+  f: AuditEventFields,
+): Record<string, unknown> {
+  if (!f.id || !f.createdAt) {
+    throw new Error('audit schema v2 requires id and createdAt');
+  }
+  return {
+    ...buildAuditEventPayloadV1(f),
+    id: f.id,
+    createdAt:
+      f.createdAt instanceof Date ? f.createdAt.toISOString() : f.createdAt,
+  };
+}
+
+const V2: AuditSerializer = {
+  version: 2,
+  hashAlg: 'sha256',
+  computeEventHash(f) {
+    return sha256Hex(legacyStableStringify(buildAuditEventPayloadV2(f)));
+  },
+  computeChainHash(prevHash, eventHash) {
+    return sha256Hex(`${prevHash ?? ''}|${eventHash}`);
+  },
+};
+
+/**
+ * v3 commits the same fields as v2 but uses collision-safe JSON encoding for
+ * object keys. v1/v2 intentionally retain their frozen historical encoding.
+ */
+const V3: AuditSerializer = {
+  version: 3,
+  hashAlg: 'sha256',
+  computeEventHash(f) {
+    return sha256Hex(stableStringify(buildAuditEventPayloadV2(f)));
+  },
+  computeChainHash(prevHash, eventHash) {
+    return sha256Hex(`${prevHash ?? ''}|${eventHash}`);
+  },
+};
+
+/**
+ * v4 freezes JSON normalization before canonical encoding. It hashes exactly
+ * the value jsonb persists and later returns, rather than arbitrary JavaScript
+ * values whose JSON representation can differ (Date, undefined, NaN, -0).
+ */
+const V4: AuditSerializer = {
+  version: 4,
+  hashAlg: 'sha256',
+  computeEventHash(f) {
+    return sha256Hex(
+      stableStringify(
+        buildAuditEventPayloadV2({
+          ...f,
+          metadata:
+            f.metadata === null ? null : normalizeJsonForStorage(f.metadata),
+        }),
+      ),
+    );
   },
   computeChainHash(prevHash, eventHash) {
     return sha256Hex(`${prevHash ?? ''}|${eventHash}`);
@@ -91,10 +166,13 @@ const V1: AuditSerializer = {
  */
 const SERIALIZERS: Record<number, AuditSerializer> = {
   1: V1,
+  2: V2,
+  3: V3,
+  4: V4,
 };
 
 /** The version new rows are written under. */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** The serializer new rows are written with. */
 export function currentSerializer(): AuditSerializer {
@@ -106,10 +184,12 @@ export function getAuditSerializer(version: number): AuditSerializer | null {
   return SERIALIZERS[version] ?? null;
 }
 
-// --- v1 convenience exports (kept for the writer, tests and callers that build
-// v1 rows directly). These are exactly the current serializer's functions. ---
+// --- Frozen v1 convenience exports for historical callers and test fixtures.
+// New writes must use currentSerializer(), never these functions. ---
 
-export function buildAuditEventPayload(f: AuditEventFields): Record<string, unknown> {
+export function buildAuditEventPayload(
+  f: AuditEventFields,
+): Record<string, unknown> {
   return buildAuditEventPayloadV1(f);
 }
 
@@ -117,6 +197,9 @@ export function computeEventHash(f: AuditEventFields): string {
   return V1.computeEventHash(f);
 }
 
-export function computeChainHash(prevHash: string | null, eventHash: string): string {
+export function computeChainHash(
+  prevHash: string | null,
+  eventHash: string,
+): string {
   return V1.computeChainHash(prevHash, eventHash);
 }
