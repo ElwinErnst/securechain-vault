@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { AuditLogEntity } from '../../database/entities/audit-log.entity';
 import {
   ChainVerifyResult,
@@ -11,10 +10,7 @@ import {
 
 @Injectable()
 export class AuditVerifierService {
-  constructor(
-    @InjectRepository(AuditLogEntity)
-    private readonly repo: Repository<AuditLogEntity>,
-  ) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   /**
    * Walk a scope's chain in ascending seq order and report the first break.
@@ -23,13 +19,27 @@ export class AuditVerifierService {
    * loaded into memory at once. The pure `stepChain` reducer carries the state
    * across batches.
    */
-  async verifyScope(scope: string, batchSize = 1000): Promise<ChainVerifyResult> {
+  async verifyScope(
+    scope: string,
+    batchSize = 1000,
+  ): Promise<ChainVerifyResult> {
+    return this.dataSource.transaction('REPEATABLE READ', (manager) =>
+      this.verifyScopeSnapshot(manager, scope, batchSize),
+    );
+  }
+
+  private async verifyScopeSnapshot(
+    manager: EntityManager,
+    scope: string,
+    batchSize: number,
+  ): Promise<ChainVerifyResult> {
+    const repo = manager.getRepository(AuditLogEntity);
     let state: ChainState = initialChainState();
     let cursor: string | null = null;
     let headHash: string | null = null;
 
     for (;;) {
-      const qb = this.repo
+      const qb = repo
         .createQueryBuilder('a')
         .where('a.scope = :scope', { scope });
 

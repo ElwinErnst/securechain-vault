@@ -8,8 +8,13 @@ import { http } from '../utils/http';
 import { resetDb, seedBase, withDb } from '../utils/db';
 import { parseBody } from '../utils/parse';
 import { VaultResponseSchema } from '../utils/schemas/vault.schemas';
-import { sha256Hex, stableStringify } from 'src/common/utils/audit-hash.util';
+import {
+  AuditEventFields,
+  CURRENT_SCHEMA_VERSION,
+  getAuditSerializer,
+} from 'src/common/utils/audit-canonical.util';
 import { buildZtHeaders } from '../utils/zt';
+import { AuditService } from 'src/modules/audit/audit.service';
 
 // ---- Audit hashing (re-use prod util if you have it; otherwise keep local) ----
 
@@ -59,6 +64,8 @@ type AuditRow = {
   prev_hash: string | null;
   event_hash: string;
   chain_hash: string;
+  schema_version: number;
+  hash_alg: string;
   created_at: string;
 };
 
@@ -78,6 +85,16 @@ async function getLastAuditForTenantAndUser(tenantId: string, userId: string) {
   });
 }
 
+async function getAuditByAction(action: string) {
+  return withDb(async (c) => {
+    const res = await c.query<AuditRow>(
+      'SELECT * FROM audit_logs WHERE action = $1 ORDER BY created_at DESC LIMIT 1',
+      [action],
+    );
+    return res.rows[0] ?? null;
+  });
+}
+
 async function getLastTwoAuditsForTenant(tenantId: string) {
   return withDb(async (c) => {
     const res = await c.query<AuditRow>(
@@ -92,10 +109,6 @@ async function getLastTwoAuditsForTenant(tenantId: string) {
     );
     return res.rows;
   });
-}
-
-function calcChainHash(prevHash: string | null, eventHash: string) {
-  return sha256Hex(`${prevHash ?? ''}|${eventHash}`);
 }
 
 describe('Audit e2e', () => {
@@ -128,6 +141,105 @@ describe('Audit e2e', () => {
     if (app) await app.close();
   });
 
+  it('persists and hashes the same normalized metadata in current-schema writes', async () => {
+    const action = `E2E_JSON_NORMALIZATION_${Date.now()}`;
+    await app.get(AuditService).createChained({
+      tenantId,
+      userId: adminUserId,
+      action,
+      resourceType: 'test',
+      resourceId: null,
+      outcome: 'SUCCESS',
+      httpStatus: 200,
+      httpMethod: 'TEST',
+      httpPath: '/test/audit-normalization',
+      ip: null,
+      userAgent: null,
+      metadata: {
+        date: new Date('2026-07-01T12:03:00.000Z'),
+        omitted: undefined,
+        values: [undefined, Number.NaN, -0],
+      },
+    });
+
+    const row = await getAuditByAction(action);
+    expect(row).toBeTruthy();
+    expect(row!.metadata).toEqual({
+      date: '2026-07-01T12:03:00.000Z',
+      values: [null, null, 0],
+    });
+    expect(row!.schema_version).toBe(CURRENT_SCHEMA_VERSION);
+
+    const serializer = getAuditSerializer(row!.schema_version)!;
+    const expected = serializer.computeEventHash({
+      id: row!.id,
+      createdAt: row!.created_at,
+      scope: row!.scope,
+      seq: row!.seq,
+      tenantId: row!.tenant_id,
+      userId: row!.user_id,
+      action: row!.action,
+      resourceType: row!.resource_type,
+      resourceId: row!.resource_id,
+      outcome: row!.outcome,
+      httpStatus: row!.http_status,
+      httpMethod: row!.http_method,
+      httpPath: row!.http_path,
+      ip: row!.ip,
+      userAgent: row!.user_agent,
+      metadata: row!.metadata,
+    });
+    expect(row!.event_hash).toBe(expected);
+  });
+
+  it.each([
+    ['NUL', { value: 'invalid\u0000value' }],
+    ['unpaired surrogate', { value: 'invalid \ud800 value' }],
+    ['invalid key', { '\udc00': 'value' }],
+  ])(
+    'rejects jsonb-incompatible metadata before insert: %s',
+    async (_, metadata) => {
+      const action = `E2E_JSON_REJECT_${Date.now()}_${Math.random()}`;
+      await expect(
+        app.get(AuditService).createChained({
+          tenantId,
+          userId: adminUserId,
+          action,
+          resourceType: 'test',
+          resourceId: null,
+          outcome: 'FAILURE',
+          httpStatus: 400,
+          httpMethod: 'TEST',
+          httpPath: '/test/audit-invalid-json',
+          ip: null,
+          userAgent: null,
+          metadata,
+        }),
+      ).rejects.toThrow('jsonb-compatible');
+      await expect(getAuditByAction(action)).resolves.toBeNull();
+    },
+  );
+
+  it('persists valid surrogate pairs and Unicode keys', async () => {
+    const action = `E2E_JSON_UNICODE_${Date.now()}`;
+    const metadata = { 'emoji-😀': ['music 𝄞', 'árbol'] };
+    await app.get(AuditService).createChained({
+      tenantId,
+      userId: adminUserId,
+      action,
+      resourceType: 'test',
+      resourceId: null,
+      outcome: 'SUCCESS',
+      httpStatus: 200,
+      httpMethod: 'TEST',
+      httpPath: '/test/audit-unicode',
+      ip: null,
+      userAgent: null,
+      metadata,
+    });
+    expect((await getAuditByAction(action))?.metadata).toEqual(metadata);
+  });
+
   it('creates SUCCESS audit log (VAULT_CREATE) with chained hashes', async () => {
     const res = await http(app)
       .post('/vaults')
@@ -158,7 +270,9 @@ describe('Audit e2e', () => {
 
     // ✅ recompute eventHash exactly like AuditService.createChained should
     // IMPORTANT: payload keys must match what you hash in prod
-    const payload = {
+    const fields: AuditEventFields = {
+      id: last.id,
+      createdAt: last.created_at,
       scope: last.scope,
       seq: last.seq,
       tenantId: last.tenant_id,
@@ -175,10 +289,18 @@ describe('Audit e2e', () => {
       metadata: last.metadata,
     };
 
-    const expectedEventHash = sha256Hex(stableStringify(payload));
+    const serializer = getAuditSerializer(last.schema_version);
+    expect(serializer).not.toBeNull();
+    expect(last.schema_version).toBe(CURRENT_SCHEMA_VERSION);
+    expect(last.hash_alg).toBe(serializer!.hashAlg);
+
+    const expectedEventHash = serializer!.computeEventHash(fields);
     expect(last.event_hash).toBe(expectedEventHash);
 
-    const expectedChainHash = calcChainHash(last.prev_hash, expectedEventHash);
+    const expectedChainHash = serializer!.computeChainHash(
+      last.prev_hash,
+      expectedEventHash,
+    );
     expect(last.chain_hash).toBe(expectedChainHash);
   });
 

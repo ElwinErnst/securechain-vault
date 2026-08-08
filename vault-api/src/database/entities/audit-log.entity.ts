@@ -1,6 +1,5 @@
 import {
   Column,
-  CreateDateColumn,
   Entity,
   Index,
   PrimaryGeneratedColumn,
@@ -94,6 +93,6 @@ export class AuditLogEntity {
   @Column({ type: 'varchar', length: 20, name: 'hash_alg', default: 'sha256' })
   hashAlg!: string;
 
-  @CreateDateColumn({ type: 'timestamptz', name: 'created_at' })
+  @Column({ type: 'timestamptz', name: 'created_at' })
   createdAt!: Date;
 }

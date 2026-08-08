@@ -3,6 +3,7 @@ import {
   AuditSerializer,
   computeChainHash,
   computeEventHash,
+  currentSerializer,
   getAuditSerializer,
 } from '../../common/utils/audit-canonical.util';
 import { ChainRow, SerializerResolver, verifyChainRows } from './audit-chain';
@@ -17,6 +18,8 @@ function makeRow(
   meta: { schemaVersion?: number; hashAlg?: string } = {},
 ): ChainRow {
   const fields: AuditEventFields = {
+    id: '00000000-0000-4000-8000-000000000001',
+    createdAt: '2026-07-01T12:03:00.000Z',
     scope: SCOPE,
     seq,
     tenantId: SCOPE,
@@ -33,14 +36,15 @@ function makeRow(
     metadata: null,
     ...overrides,
   };
-  const eventHash = computeEventHash(fields);
-  const chainHash = computeChainHash(prevHash, eventHash);
+  const serializer = currentSerializer();
+  const eventHash = serializer.computeEventHash(fields);
+  const chainHash = serializer.computeChainHash(prevHash, eventHash);
   return {
     ...fields,
     prevHash,
     eventHash,
     chainHash,
-    schemaVersion: meta.schemaVersion ?? 1,
+    schemaVersion: meta.schemaVersion ?? serializer.version,
     hashAlg: meta.hashAlg ?? 'sha256',
   };
 }
@@ -79,6 +83,22 @@ describe('verifyChainRows', () => {
     expect(res.firstBreak?.reason).toBe('EVENT_HASH_MISMATCH');
     expect(res.firstBreak?.seq).toBe('2');
     expect(res.checked).toBe(1); // r1 verified before the break
+  });
+
+  it('detects timestamp tampering for current-version rows', () => {
+    const [row] = validChain();
+    const res = verifyChainRows(SCOPE, [
+      { ...row, createdAt: '2026-07-01T12:04:00.000Z' },
+    ]);
+    expect(res.firstBreak?.reason).toBe('EVENT_HASH_MISMATCH');
+  });
+
+  it('detects id tampering for current-version rows', () => {
+    const [row] = validChain();
+    const res = verifyChainRows(SCOPE, [
+      { ...row, id: '00000000-0000-4000-8000-000000000099' },
+    ]);
+    expect(res.firstBreak?.reason).toBe('EVENT_HASH_MISMATCH');
   });
 
   it('detects interior deletion as a seq gap', () => {
@@ -127,8 +147,79 @@ describe('verifyChainRows', () => {
 });
 
 describe('verifyChainRows — schema/algorithm versioning', () => {
+  it.each([1, 2, 3])(
+    'keeps historical schema v%i rows verifiable after the v4 serializer change',
+    (version) => {
+      const serializer = getAuditSerializer(version)!;
+      const fields: AuditEventFields = {
+        id: '00000000-0000-4000-8000-000000000001',
+        createdAt: '2026-07-01T12:03:00.000Z',
+        scope: SCOPE,
+        seq: '1',
+        tenantId: SCOPE,
+        userId: 'user-1',
+        action: 'DOCUMENT_READ',
+        resourceType: 'document',
+        resourceId: 'doc-1',
+        outcome: 'SUCCESS',
+        httpStatus: 200,
+        httpMethod: 'GET',
+        httpPath: '/documents/doc-1',
+        ip: null,
+        userAgent: null,
+        metadata: { 'quoted\"key': 'historical' },
+      };
+      const eventHash = serializer.computeEventHash(fields);
+      const row: ChainRow = {
+        ...fields,
+        prevHash: null,
+        eventHash,
+        chainHash: serializer.computeChainHash(null, eventHash),
+        schemaVersion: version,
+        hashAlg: serializer.hashAlg,
+      };
+
+      expect(verifyChainRows(SCOPE, [row]).status).toBe('VALID');
+    },
+  );
+
+  it('uses normalized, collision-safe JSON for newly written v4 rows', () => {
+    const serializer = currentSerializer();
+    const base: AuditEventFields = {
+      id: '00000000-0000-4000-8000-000000000001',
+      createdAt: '2026-07-01T12:03:00.000Z',
+      scope: SCOPE,
+      seq: '1',
+      tenantId: SCOPE,
+      userId: 'user-1',
+      action: 'DOCUMENT_READ',
+      resourceType: 'document',
+      resourceId: 'doc-1',
+      outcome: 'SUCCESS',
+      httpStatus: 200,
+      httpMethod: 'GET',
+      httpPath: '/documents/doc-1',
+      ip: null,
+      userAgent: null,
+      metadata: null,
+    };
+
+    expect(serializer.version).toBe(4);
+    expect(
+      serializer.computeEventHash({ ...base, metadata: { 'a\":1,\"b': 2 } }),
+    ).not.toBe(
+      serializer.computeEventHash({ ...base, metadata: { a: 1, b: 2 } }),
+    );
+    expect(
+      serializer.computeEventHash({
+        ...base,
+        metadata: { value: -0, omitted: undefined },
+      }),
+    ).toBe(serializer.computeEventHash({ ...base, metadata: { value: 0 } }));
+  });
+
   it('rejects a row whose schema version has no registered serializer', () => {
-    const row = makeRow('1', null, {}, { schemaVersion: 2 });
+    const row = makeRow('1', null, {}, { schemaVersion: 999 });
     const res = verifyChainRows(SCOPE, [row]);
     expect(res.status).toBe('BROKEN');
     expect(res.firstBreak?.reason).toBe('UNKNOWN_SCHEMA_VERSION');
@@ -147,15 +238,17 @@ describe('verifyChainRows — schema/algorithm versioning', () => {
   // THAT serializer, not today's. Proves the verifier dispatches by version.
   it('verifies a row against its own version serializer via the resolver', () => {
     const fakeV2: AuditSerializer = {
-      version: 2,
-      hashAlg: 'sha256-v2',
+      version: 99,
+      hashAlg: 'sha256-test',
       computeEventHash: (f) => `v2:${computeEventHash(f)}`,
       computeChainHash: (prev, ev) => `v2:${computeChainHash(prev, ev)}`,
     };
     const resolve: SerializerResolver = (v) =>
-      v === 2 ? fakeV2 : getAuditSerializer(v);
+      v === 99 ? fakeV2 : getAuditSerializer(v);
 
     const fields: AuditEventFields = {
+      id: '00000000-0000-4000-8000-000000000001',
+      createdAt: '2026-07-01T12:03:00.000Z',
       scope: SCOPE,
       seq: '1',
       tenantId: SCOPE,
@@ -177,7 +270,7 @@ describe('verifyChainRows — schema/algorithm versioning', () => {
       prevHash: null,
       eventHash,
       chainHash: fakeV2.computeChainHash(null, eventHash),
-      schemaVersion: 2,
+      schemaVersion: 99,
       hashAlg: fakeV2.hashAlg,
     };
 
