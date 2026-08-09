@@ -1,14 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
+import { AuthDirectoryService } from '../../src/common/modules/auth-directory/auth-directory.service';
+import { createFakeAuthDirectory } from '../utils/auth-directory.fake';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
 import { parseBody } from '../utils/parse';
-import {
-  TenantResponseSchema,
-  TenantsListSchema,
-} from '../utils/schemas/auth.schemas';
+import { TenantsListSchema } from '../utils/schemas/auth.schemas';
 import { buildZtHeaders } from '../utils/zt';
 
 describe('Tenants e2e', () => {
@@ -21,7 +20,10 @@ describe('Tenants e2e', () => {
 
     const modRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AuthDirectoryService)
+      .useValue(createFakeAuthDirectory())
+      .compile();
 
     app = modRef.createNestApplication();
     await app.init();
@@ -55,8 +57,8 @@ describe('Tenants e2e', () => {
     expect(tenants.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('creates tenant', async () => {
-    const res = await http(app)
+  it('POST /tenants is deprecated (tenant creation moved to auth-api)', async () => {
+    await http(app)
       .post('/tenants')
       .set(
         buildZtHeaders({
@@ -68,40 +70,6 @@ describe('Tenants e2e', () => {
         }),
       )
       .send({ name: 'Beta', slug: 'beta', type: 'ORG' })
-      .expect(201);
-
-    const created = parseBody(res, TenantResponseSchema);
-    expect(created.id).toBeTruthy();
-    expect(created.slug).toBe('beta');
-  });
-
-  it('rejects duplicate tenant slug', async () => {
-    await http(app)
-      .post('/tenants')
-      .set(
-        buildZtHeaders({
-          method: 'POST',
-          path: '/tenants',
-          userId: adminUserId,
-          tenantId,
-          roles: ['ADMIN'],
-        }),
-      )
-      .send({ name: 'Dup', slug: 'dup', type: 'ORG' })
-      .expect(201);
-
-    await http(app)
-      .post('/tenants')
-      .set(
-        buildZtHeaders({
-          method: 'POST',
-          path: '/tenants',
-          userId: adminUserId,
-          tenantId,
-          roles: ['ADMIN'],
-        }),
-      )
-      .send({ name: 'Dup2', slug: 'dup', type: 'ORG' })
       .expect(409);
   });
 });
