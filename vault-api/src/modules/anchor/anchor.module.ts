@@ -7,16 +7,16 @@ import { StorageModule } from 'src/common/modules/storage/storage.module';
 
 import { AnchorService } from './anchor.service';
 import { PublicVerifyController } from './public-verify.controller';
+import { Rfc3161TimestampClient } from './rfc3161-timestamp.client';
 import {
   TIMESTAMP_CLIENT,
   type TimestampClientPort,
   type TimestampResult,
 } from './ports/timestamp-client.port';
 
-// Simulated timestamp client for the MVP (until a real RFC 3161 Timestamp
-// Authority client is wired in). It performs NO external attestation, so it
-// returns no token: callers must treat the result as unproven and never present
-// it as an external timestamp.
+// Honest fallback when no TSA is configured: performs NO external attestation,
+// so it returns no token. Callers must treat the result as unproven and never
+// present it as an external timestamp.
 class SimulatedTimestampClient implements TimestampClientPort {
   timestampRoot(): Promise<TimestampResult> {
     return Promise.resolve({
@@ -29,6 +29,17 @@ class SimulatedTimestampClient implements TimestampClientPort {
   }
 }
 
+// Use a real RFC 3161 TSA when ANCHOR_TSA_URL is set; otherwise fall back to the
+// honest simulated client (dev/test).
+function createTimestampClient(): TimestampClientPort {
+  const url = process.env.ANCHOR_TSA_URL?.trim();
+  if (url) {
+    const timeoutMs = Number(process.env.ANCHOR_TSA_TIMEOUT_MS) || 10_000;
+    return new Rfc3161TimestampClient(url, timeoutMs);
+  }
+  return new SimulatedTimestampClient();
+}
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([DocumentEntity, AnchorBatchEntity]),
@@ -37,7 +48,7 @@ class SimulatedTimestampClient implements TimestampClientPort {
   controllers: [PublicVerifyController],
   providers: [
     AnchorService,
-    { provide: TIMESTAMP_CLIENT, useClass: SimulatedTimestampClient },
+    { provide: TIMESTAMP_CLIENT, useFactory: createTimestampClient },
   ],
   exports: [AnchorService],
 })
