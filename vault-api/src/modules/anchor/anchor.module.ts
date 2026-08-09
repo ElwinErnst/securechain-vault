@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
@@ -9,12 +11,16 @@ import { AnchorService } from './anchor.service';
 import { PublicVerifyController } from './public-verify.controller';
 import { Rfc3161TimestampClient } from './rfc3161-timestamp.client';
 import { Rfc3161TimestampVerifier } from './rfc3161-verify';
+import { FREETSA_CA_PEM } from './freetsa-ca';
 import {
   TIMESTAMP_CLIENT,
   type TimestampClientPort,
   type TimestampResult,
 } from './ports/timestamp-client.port';
-import { TIMESTAMP_VERIFIER } from './ports/timestamp-verifier.port';
+import {
+  TIMESTAMP_VERIFIER,
+  type TimestampVerifierPort,
+} from './ports/timestamp-verifier.port';
 
 // Honest fallback when no TSA is configured: performs NO external attestation,
 // so it returns no token. Callers must treat the result as unproven and never
@@ -42,6 +48,20 @@ function createTimestampClient(): TimestampClientPort {
   return new SimulatedTimestampClient();
 }
 
+// Trust anchor(s) for RFC 3161 chain validation. ANCHOR_TSA_CA_PEM may hold an
+// inline PEM or a path to a PEM file; otherwise the bundled FreeTSA CA is used
+// (FreeTSA being the default TSA).
+function createTimestampVerifier(): TimestampVerifierPort {
+  const configured = process.env.ANCHOR_TSA_CA_PEM?.trim();
+  const pem =
+    configured && configured.includes('BEGIN CERTIFICATE')
+      ? configured
+      : configured
+        ? readFileSync(configured, 'utf8')
+        : FREETSA_CA_PEM;
+  return new Rfc3161TimestampVerifier([pem]);
+}
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([DocumentEntity, AnchorBatchEntity]),
@@ -51,7 +71,7 @@ function createTimestampClient(): TimestampClientPort {
   providers: [
     AnchorService,
     { provide: TIMESTAMP_CLIENT, useFactory: createTimestampClient },
-    { provide: TIMESTAMP_VERIFIER, useClass: Rfc3161TimestampVerifier },
+    { provide: TIMESTAMP_VERIFIER, useFactory: createTimestampVerifier },
   ],
   exports: [AnchorService],
 })
