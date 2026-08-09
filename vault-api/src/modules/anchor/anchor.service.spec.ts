@@ -11,6 +11,7 @@ import type {
   TimestampClientPort,
   TimestampResult,
 } from './ports/timestamp-client.port';
+import type { TimestampVerifierPort } from './ports/timestamp-verifier.port';
 import { buildMerkleTree } from './merkle.util';
 
 /**
@@ -67,6 +68,7 @@ describe('AnchorService (Merkle batch anchoring)', () => {
     batch?: AnchorBatchEntity | null;
     buffer?: Buffer;
     ts?: TimestampResult;
+    tokenValid?: boolean;
   }): { service: AnchorService; savedBatch: jest.Mock; savedDocs: jest.Mock } {
     const savedBatch = jest.fn((b: AnchorBatchEntity) => ({
       ...b,
@@ -103,8 +105,24 @@ describe('AnchorService (Merkle batch anchoring)', () => {
       timestampRoot: jest.fn().mockResolvedValue(opts.ts ?? SIMULATED),
     };
 
+    const tokenVerifier: TimestampVerifierPort = {
+      verifyToken: jest
+        .fn()
+        .mockResolvedValue(
+          opts.tokenValid === false
+            ? { valid: false, reason: 'token signature did not verify' }
+            : { valid: true, reason: null },
+        ),
+    };
+
     return {
-      service: new AnchorService(docsRepo, batchRepo, storage, timestampClient),
+      service: new AnchorService(
+        docsRepo,
+        batchRepo,
+        storage,
+        timestampClient,
+        tokenVerifier,
+      ),
       savedBatch,
       savedDocs,
     };
@@ -176,6 +194,39 @@ describe('AnchorService (Merkle batch anchoring)', () => {
     expect(result.status).toBe('VALID');
     expect(result.rootHex).toBe(tree.root);
     expect(result.reason).toBeNull();
+  });
+
+  it('reports MODIFIED when the timestamp token fails verification', async () => {
+    const buf = Buffer.from('valid document bytes');
+    const leafValue = sha256Hex(buf);
+    const tree = buildMerkleTree([leafValue]);
+
+    const doc = makeDoc({
+      sha256CipherHex: leafValue,
+      anchorStatus: 'ANCHORED',
+      anchorBatchId: 'batch-1',
+      anchorProof: tree.proofFor(0),
+      anchoredAt: REAL.timestampedAt,
+    });
+    const batch = {
+      id: 'batch-1',
+      rootHex: tree.root,
+      status: 'TIMESTAMPED',
+      timestampTokenB64: 'dG9rZW4=',
+      timestampedAt: REAL.timestampedAt,
+    } as AnchorBatchEntity;
+
+    // Content and inclusion proof are fine, but the token does not verify.
+    const { service } = makeService({
+      doc,
+      batch,
+      buffer: buf,
+      tokenValid: false,
+    });
+    const result = await service.verifyDocument(doc.id);
+
+    expect(result.status).toBe('MODIFIED');
+    expect(result.reason).toMatch(/token failed verification/i);
   });
 
   it('reports MODIFIED when stored bytes no longer match the committed hash', async () => {
