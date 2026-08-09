@@ -88,15 +88,25 @@ export class AnchorService {
 
     const result = await this.anchorClient.anchorDocumentHash(payload);
 
-    doc.anchorStatus = 'ANCHORED';
-    doc.anchorTxHash = result.txHash;
-    doc.anchoredAt = result.anchoredAt;
+    if (result.simulated) {
+      // No on-chain proof exists. Keep the record honest: mark it SIMULATED and
+      // never store a tx hash or anchored timestamp that could be shown as proof.
+      doc.anchorStatus = 'SIMULATED';
+      doc.anchorTxHash = null;
+      doc.anchoredAt = null;
+    } else {
+      doc.anchorStatus = 'ANCHORED';
+      doc.anchorTxHash = result.txHash;
+      doc.anchoredAt = result.anchoredAt;
+    }
     doc.anchorChainId = result.chainId;
     doc.anchorRetries = 0;
     await this.docsRepo.save(doc);
 
     this.logger.log(
-      `Anchored document ${doc.id} (tenant=${doc.tenantId}) tx=${result.txHash} chainId=${result.chainId}`,
+      result.simulated
+        ? `Simulated anchor for document ${doc.id} (tenant=${doc.tenantId}) chainId=${result.chainId} — no on-chain proof`
+        : `Anchored document ${doc.id} (tenant=${doc.tenantId}) tx=${result.txHash} chainId=${result.chainId}`,
     );
 
     return { doc, payload, result };
@@ -188,7 +198,9 @@ export class AnchorService {
         reason:
           doc.anchorStatus === 'FAILED'
             ? `Anchor failed after ${doc.anchorRetries ?? 0} retries`
-            : 'Document pending blockchain anchoring',
+            : doc.anchorStatus === 'SIMULATED'
+              ? 'Anchoring is simulated in this environment; no on-chain proof exists'
+              : 'Document pending blockchain anchoring',
       };
     }
 
