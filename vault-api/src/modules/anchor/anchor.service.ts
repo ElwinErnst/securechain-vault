@@ -12,6 +12,10 @@ import {
   TIMESTAMP_CLIENT,
   type TimestampClientPort,
 } from './ports/timestamp-client.port';
+import {
+  TIMESTAMP_VERIFIER,
+  type TimestampVerifierPort,
+} from './ports/timestamp-verifier.port';
 import { buildMerkleTree, verifyMerkleProof } from './merkle.util';
 
 /** Upper bound on how many documents go into one Merkle batch per run. */
@@ -41,6 +45,8 @@ export class AnchorService {
     private readonly storage: StorageService,
     @Inject(TIMESTAMP_CLIENT)
     private readonly timestampClient: TimestampClientPort,
+    @Inject(TIMESTAMP_VERIFIER)
+    private readonly tokenVerifier: TimestampVerifierPort,
   ) {}
 
   async getDocOrThrow(
@@ -225,10 +231,29 @@ export class AnchorService {
       };
     }
 
-    // NOTE (next phase): the RFC 3161 token's signature over the root is not yet
-    // cryptographically validated here. That step confirms the TSA attested this
-    // exact root at `timestampedAt`; until then VALID means "content unchanged
-    // and included in the anchored root", which is stored alongside the token.
+    // Cryptographically validate the RFC 3161 token: it must attest THIS root
+    // (messageImprint) and its CMS signature must verify against the embedded
+    // TSA certificate. Without this, a stored token is trusted blindly.
+    const tokenCheck = batch.timestampTokenB64
+      ? await this.tokenVerifier.verifyToken(
+          batch.timestampTokenB64,
+          batch.rootHex,
+        )
+      : { valid: false, reason: 'batch has no timestamp token' };
+
+    if (!tokenCheck.valid) {
+      return {
+        status: 'MODIFIED',
+        documentId: doc.id,
+        storedSha256,
+        currentSha256,
+        rootHex: batch.rootHex,
+        batchId: batch.id,
+        timestampedAt: batch.timestampedAt,
+        reason: `Timestamp token failed verification: ${tokenCheck.reason ?? 'unknown'}`,
+      };
+    }
+
     return {
       status: 'VALID',
       documentId: doc.id,

@@ -8,11 +8,13 @@ import { StorageModule } from 'src/common/modules/storage/storage.module';
 import { AnchorService } from './anchor.service';
 import { PublicVerifyController } from './public-verify.controller';
 import { Rfc3161TimestampClient } from './rfc3161-timestamp.client';
+import { Rfc3161TimestampVerifier } from './rfc3161-verify';
 import {
   TIMESTAMP_CLIENT,
   type TimestampClientPort,
   type TimestampResult,
 } from './ports/timestamp-client.port';
+import { TIMESTAMP_VERIFIER } from './ports/timestamp-verifier.port';
 
 // Honest fallback when no TSA is configured: performs NO external attestation,
 // so it returns no token. Callers must treat the result as unproven and never
@@ -49,6 +51,7 @@ function createTimestampClient(): TimestampClientPort {
   providers: [
     AnchorService,
     { provide: TIMESTAMP_CLIENT, useFactory: createTimestampClient },
+    { provide: TIMESTAMP_VERIFIER, useClass: Rfc3161TimestampVerifier },
   ],
   exports: [AnchorService],
 })
