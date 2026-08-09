@@ -1,29 +1,33 @@
 // src/modules/anchor/anchor.service.ts
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  ForbiddenException,
-  Inject,
-} from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'crypto';
 import { Repository } from 'typeorm';
 
 import { DocumentEntity } from '../../database/entities/document.entity';
+import { AnchorBatchEntity } from '../../database/entities/anchor-batch.entity';
 import { StorageService } from '../../common/modules/storage/storage.service';
-import type { AnchorPayload } from './types/anchor-payload.type';
 import type { PublicVerifyResult } from './types/public-verify-result.type';
-import type {
-  AnchorClientPort,
-  AnchorResult,
-} from './ports/anchor-client.port';
+import {
+  TIMESTAMP_CLIENT,
+  type TimestampClientPort,
+} from './ports/timestamp-client.port';
+import { buildMerkleTree, verifyMerkleProof } from './merkle.util';
 
-/**
- * Token de inyección para el cliente concreto (EthersAnchorClient, HttpAnchorClient, etc).
- * En tu AnchorModule registrás un provider con este token.
- */
-export const ANCHOR_CLIENT = Symbol('ANCHOR_CLIENT');
+/** Upper bound on how many documents go into one Merkle batch per run. */
+const MAX_LEAVES_PER_BATCH = 256;
+
+export type DocumentVerifyResult = {
+  status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
+  documentId: string;
+  storedSha256: string;
+  currentSha256: string;
+  /** Merkle root the document was anchored under, or null when not anchored. */
+  rootHex: string | null;
+  batchId: string | null;
+  timestampedAt: Date | null;
+  reason: string | null;
+};
 
 @Injectable()
 export class AnchorService {
@@ -32,16 +36,13 @@ export class AnchorService {
   constructor(
     @InjectRepository(DocumentEntity)
     private readonly docsRepo: Repository<DocumentEntity>,
+    @InjectRepository(AnchorBatchEntity)
+    private readonly batchRepo: Repository<AnchorBatchEntity>,
     private readonly storage: StorageService,
-    // Inyectá un provider que implemente AnchorClientPort con el token ANCHOR_CLIENT
-    // (ver nota al final)
-    @Inject(ANCHOR_CLIENT)
-    private readonly anchorClient: AnchorClientPort,
+    @Inject(TIMESTAMP_CLIENT)
+    private readonly timestampClient: TimestampClientPort,
   ) {}
 
-  /**
-   * Obtiene un documento del tenant (o 404 si no existe).
-   */
   async getDocOrThrow(
     tenantId: string,
     documentId: string,
@@ -55,129 +56,107 @@ export class AnchorService {
   }
 
   /**
-   * Calcula SHA-256 del contenido actual en storage (MinIO).
-   * Devuelve hex lowercase (64 chars).
+   * The value committed as a document's Merkle leaf. This is the hash of the
+   * bytes actually stored (ciphertext when encrypted), so verification can
+   * recompute it from storage.
    */
-  computeDocumentSha256Hex(doc: DocumentEntity): string {
-    return doc.sha256PlainHex;
+  private leafValue(doc: DocumentEntity): string {
+    return doc.sha256CipherHex ?? doc.sha256PlainHex;
   }
 
   /**
-   * Ancla el hash del documento a blockchain (vía AnchorClientPort).
-   * NO persiste nada en DB (así compila aunque aún no agregues columnas de "anchor").
-   * Si querés persistir, lo hacemos en el siguiente paso con campos nuevos o tabla `document_anchors`.
+   * Build a Merkle tree over the given documents, obtain one external timestamp
+   * for the root, and persist the batch plus each document's inclusion proof
+   * atomically. The (network) timestamp call happens BEFORE the DB transaction
+   * so a transaction never waits on the TSA.
+   */
+  private async anchorDocuments(
+    docs: DocumentEntity[],
+  ): Promise<AnchorBatchEntity | null> {
+    if (docs.length === 0) return null;
+
+    const tree = buildMerkleTree(docs.map((d) => this.leafValue(d)));
+    const ts = await this.timestampClient.timestampRoot(tree.root);
+
+    return this.docsRepo.manager.transaction(async (em) => {
+      const batchRepo = em.getRepository(AnchorBatchEntity);
+      const docRepo = em.getRepository(DocumentEntity);
+
+      const batch = await batchRepo.save(
+        batchRepo.create({
+          rootHex: tree.root,
+          leafCount: tree.leafCount,
+          status: ts.simulated ? 'SIMULATED' : 'TIMESTAMPED',
+          timestampTokenB64: ts.tokenB64,
+          tsaUrl: ts.tsaUrl,
+          tsaSerial: ts.serial,
+          timestampedAt: ts.simulated ? null : ts.timestampedAt,
+        }),
+      );
+
+      docs.forEach((doc, index) => {
+        doc.anchorBatchId = batch.id;
+        doc.anchorLeafIndex = index;
+        doc.anchorProof = tree.proofFor(index);
+        // A simulated timestamp is not proof: mark the document SIMULATED and
+        // record no anchored time, so verification refuses to call it VALID.
+        doc.anchorStatus = ts.simulated ? 'SIMULATED' : 'ANCHORED';
+        doc.anchoredAt = ts.simulated ? null : ts.timestampedAt;
+        doc.anchorRetries = 0;
+      });
+      await docRepo.save(docs);
+
+      return batch;
+    });
+  }
+
+  /**
+   * Anchor a single document on demand (a degenerate one-leaf batch). Used by
+   * the notary flow.
    */
   async anchorDocumentById(opts: {
     tenantId: string;
     documentId: string;
-  }): Promise<{
-    doc: DocumentEntity;
-    payload: AnchorPayload;
-    result: AnchorResult;
-  }> {
+  }): Promise<{ doc: DocumentEntity; batch: AnchorBatchEntity }> {
     const doc = await this.getDocOrThrow(opts.tenantId, opts.documentId);
-
-    const sha256Hex = this.computeDocumentSha256Hex(doc);
-
-    const payload: AnchorPayload = {
-      tenantId: doc.tenantId,
-      vaultId: doc.vaultId,
-      documentId: doc.id,
-      sha256Hex,
-    };
-
-    const result = await this.anchorClient.anchorDocumentHash(payload);
-
-    if (result.simulated) {
-      // No on-chain proof exists. Keep the record honest: mark it SIMULATED and
-      // never store a tx hash or anchored timestamp that could be shown as proof.
-      doc.anchorStatus = 'SIMULATED';
-      doc.anchorTxHash = null;
-      doc.anchoredAt = null;
-    } else {
-      doc.anchorStatus = 'ANCHORED';
-      doc.anchorTxHash = result.txHash;
-      doc.anchoredAt = result.anchoredAt;
+    const batch = await this.anchorDocuments([doc]);
+    if (!batch) {
+      throw new Error('Anchoring produced no batch');
     }
-    doc.anchorChainId = result.chainId;
-    doc.anchorRetries = 0;
-    await this.docsRepo.save(doc);
-
-    this.logger.log(
-      result.simulated
-        ? `Simulated anchor for document ${doc.id} (tenant=${doc.tenantId}) chainId=${result.chainId} — no on-chain proof`
-        : `Anchored document ${doc.id} (tenant=${doc.tenantId}) tx=${result.txHash} chainId=${result.chainId}`,
-    );
-
-    return { doc, payload, result };
+    return { doc, batch };
   }
 
   async processPending(): Promise<{ processed: number; failed: number }> {
-    const pendingDocs = await this.docsRepo.find({
+    const pending = await this.docsRepo.find({
       where: { anchorStatus: 'PENDING' },
-      take: 50,
+      order: { createdAt: 'ASC' },
+      take: MAX_LEAVES_PER_BATCH,
     });
 
-    let processed = 0;
-    let failed = 0;
-
-    const MAX_RETRIES = 5;
-
-    for (const doc of pendingDocs) {
-      try {
-        await this.anchorDocumentById({
-          tenantId: doc.tenantId,
-          documentId: doc.id,
-        });
-
-        processed++;
-      } catch (err: unknown) {
-        // Incrementar contador de reintentos
-        const currentRetry = doc.anchorRetries ?? 0;
-
-        if (currentRetry < MAX_RETRIES) {
-          // Backoff exponencial: 2^retry segundos
-          const exponentialSeconds = Math.pow(2, currentRetry);
-          doc.anchorRetries = currentRetry + 1;
-          await this.docsRepo.save(doc);
-
-          this.logger.warn(
-            `Failed to anchor doc ${doc.id}, retry ${currentRetry + 1}/${MAX_RETRIES} in ${exponentialSeconds}s. Error: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        } else {
-          // Máximos reintentos alcanzados
-          doc.anchorStatus = 'FAILED';
-          doc.anchorRetries = MAX_RETRIES;
-          await this.docsRepo.save(doc);
-
-          failed++;
-          this.logger.error(
-            `Anchor failed permanently for doc ${doc.id} after ${MAX_RETRIES} retries: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
+    if (pending.length === 0) {
+      return { processed: 0, failed: 0 };
     }
 
-    return { processed, failed };
+    try {
+      const batch = await this.anchorDocuments(pending);
+      this.logger.log(
+        `Anchored batch ${batch?.id} — ${pending.length} docs, status=${batch?.status}`,
+      );
+      return { processed: pending.length, failed: 0 };
+    } catch (err: unknown) {
+      // Leave the documents PENDING. A transient timestamping failure should be
+      // retried on the next run, not turned into a permanent FAILED state.
+      this.logger.error(
+        `Failed to anchor batch of ${pending.length} docs: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return { processed: 0, failed: pending.length };
+    }
   }
 
-  async verifyDocument(documentId: string): Promise<{
-    status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
-    documentId: string;
-    storedSha256: string;
-    currentSha256: string;
-    anchorTxHash: string | null;
-    anchoredAt: Date | null;
-    reason: string | null;
-  }> {
-    const doc = await this.docsRepo.findOne({
-      where: { id: documentId },
-    });
-
+  async verifyDocument(documentId: string): Promise<DocumentVerifyResult> {
+    const doc = await this.docsRepo.findOne({ where: { id: documentId } });
     if (!doc) {
       throw new NotFoundException('Document not found');
     }
@@ -185,22 +164,33 @@ export class AnchorService {
     const currentSha256 = this.sha256Hex(
       await this.storage.getBuffer(doc.storageKey),
     );
-    const storedSha256 = doc.sha256CipherHex ?? doc.sha256PlainHex;
+    const storedSha256 = this.leafValue(doc);
 
-    if (!doc.anchorTxHash || !doc.anchoredAt) {
+    const batch = doc.anchorBatchId
+      ? await this.batchRepo.findOne({ where: { id: doc.anchorBatchId } })
+      : null;
+
+    const isAnchored =
+      batch?.status === 'TIMESTAMPED' &&
+      !!doc.anchorProof &&
+      !!doc.anchoredAt &&
+      !!batch.timestampedAt;
+
+    if (!isAnchored) {
       return {
         status: 'NOT_ANCHORED',
         documentId: doc.id,
         storedSha256,
         currentSha256,
-        anchorTxHash: null,
-        anchoredAt: null,
+        rootHex: batch?.rootHex ?? null,
+        batchId: doc.anchorBatchId ?? null,
+        timestampedAt: null,
         reason:
           doc.anchorStatus === 'FAILED'
             ? `Anchor failed after ${doc.anchorRetries ?? 0} retries`
             : doc.anchorStatus === 'SIMULATED'
-              ? 'Anchoring is simulated in this environment; no on-chain proof exists'
-              : 'Document pending blockchain anchoring',
+              ? 'Anchoring is simulated in this environment; no external timestamp exists'
+              : 'Document pending anchoring',
       };
     }
 
@@ -210,19 +200,43 @@ export class AnchorService {
         documentId: doc.id,
         storedSha256,
         currentSha256,
-        anchorTxHash: doc.anchorTxHash,
-        anchoredAt: doc.anchoredAt,
-        reason: 'Content hash mismatch - document may have been tampered',
+        rootHex: batch.rootHex,
+        batchId: batch.id,
+        timestampedAt: batch.timestampedAt,
+        reason: 'Content hash mismatch — document may have been tampered',
       };
     }
 
+    const includedInRoot = verifyMerkleProof(
+      storedSha256,
+      doc.anchorProof ?? [],
+      batch.rootHex,
+    );
+    if (!includedInRoot) {
+      return {
+        status: 'MODIFIED',
+        documentId: doc.id,
+        storedSha256,
+        currentSha256,
+        rootHex: batch.rootHex,
+        batchId: batch.id,
+        timestampedAt: batch.timestampedAt,
+        reason: 'Inclusion proof does not reconstruct the anchored root',
+      };
+    }
+
+    // NOTE (next phase): the RFC 3161 token's signature over the root is not yet
+    // cryptographically validated here. That step confirms the TSA attested this
+    // exact root at `timestampedAt`; until then VALID means "content unchanged
+    // and included in the anchored root", which is stored alongside the token.
     return {
       status: 'VALID',
       documentId: doc.id,
       storedSha256,
       currentSha256,
-      anchorTxHash: doc.anchorTxHash,
-      anchoredAt: doc.anchoredAt,
+      rootHex: batch.rootHex,
+      batchId: batch.id,
+      timestampedAt: batch.timestampedAt,
       reason: null,
     };
   }
@@ -230,27 +244,25 @@ export class AnchorService {
   async verifyDocumentPublic(documentId: string): Promise<PublicVerifyResult> {
     const result = await this.verifyDocument(documentId);
 
-    if (!result.anchorTxHash || !result.anchoredAt) {
+    // No external timestamp → nothing to serve publicly. A MODIFIED result is
+    // still returned: the public verifier must be able to see tampering.
+    if (
+      result.status === 'NOT_ANCHORED' ||
+      !result.rootHex ||
+      !result.timestampedAt
+    ) {
       throw new NotFoundException('Public verification record not found');
-    }
-
-    if (result.status === 'NOT_ANCHORED') {
-      throw new ForbiddenException(
-        'Document is not available for public verification',
-      );
     }
 
     return {
       status: result.status,
       documentId: result.documentId,
-      anchorTxHash: result.anchorTxHash,
-      anchoredAt: result.anchoredAt,
+      rootHex: result.rootHex,
+      batchId: result.batchId,
+      timestampedAt: result.timestampedAt,
     };
   }
 
-  /**
-   * Helper: hash SHA-256 -> hex.
-   */
   private sha256Hex(buf: Buffer): string {
     return createHash('sha256').update(buf).digest('hex');
   }

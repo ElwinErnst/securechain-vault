@@ -12,6 +12,7 @@ set -eu
 base=/opt/securechain-postgres
 psql -v ON_ERROR_STOP=1 -f "$base/init/040_audit_schema_version.sql"
 psql -v ON_ERROR_STOP=1 -f "$base/init/050_audit_append_only.sql"
+psql -v ON_ERROR_STOP=1 -f "$base/init/055_anchor_merkle.sql"
 psql -v ON_ERROR_STOP=1 \
   --set=app_user="$APP_DB_USER" \
   --set=app_password="$APP_DB_PASSWORD" \

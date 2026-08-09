@@ -6,6 +6,8 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
+import type { ProofStep } from '../../modules/anchor/merkle.util';
+
 @Entity('documents')
 @Index(['tenantId', 'vaultId', 'createdAt'])
 @Index(['tenantId', 'id'], { unique: true })
@@ -97,4 +99,17 @@ export class DocumentEntity {
     default: 0,
   })
   anchorRetries!: number;
+
+  // Merkle anchoring: the batch this document was included in, its leaf position
+  // within that batch, and the inclusion proof from its leaf up to the batch
+  // root. Together with the batch's timestamp token these prove the document was
+  // committed to at the anchored time.
+  @Column({ type: 'uuid', name: 'anchor_batch_id', nullable: true })
+  anchorBatchId!: string | null;
+
+  @Column({ type: 'int', name: 'anchor_leaf_index', nullable: true })
+  anchorLeafIndex!: number | null;
+
+  @Column({ type: 'jsonb', name: 'anchor_proof', nullable: true })
+  anchorProof!: ProofStep[] | null;
 }

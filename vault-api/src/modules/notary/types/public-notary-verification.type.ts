@@ -1,10 +1,11 @@
 export type PublicNotaryVerification = {
-  status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
+  status: 'VALID' | 'MODIFIED';
   notaryStatus: 'PENDING' | 'ISSUED' | 'SIMULATED' | 'FAILED';
   documentId: string;
   provider: string;
-  providerRef: string | null;
-  chainId: number | null;
-  anchorTxHash: string | null;
-  anchoredAt: Date | null;
+  /** Merkle root the document was anchored under. */
+  rootHex: string;
+  batchId: string | null;
+  /** When the anchoring batch was externally timestamped. */
+  timestampedAt: Date;
 };

@@ -1,6 +1,10 @@
 export type PublicVerifyResult = {
-  status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
+  /** NOT_ANCHORED is never returned publicly (it throws) — only these two. */
+  status: 'VALID' | 'MODIFIED';
   documentId: string;
-  anchorTxHash: string | null;
-  anchoredAt: Date | null;
+  /** Merkle root the document was anchored under. */
+  rootHex: string;
+  batchId: string | null;
+  /** When the anchoring batch was externally timestamped. */
+  timestampedAt: Date;
 };

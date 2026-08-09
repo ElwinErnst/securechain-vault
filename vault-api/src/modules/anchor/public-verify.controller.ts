@@ -7,8 +7,8 @@ const QuerySchema = z.object({
   documentId: z.string().uuid(),
 });
 
-type PublicVerifyHttpResponse = Omit<PublicVerifyResult, 'anchoredAt'> & {
-  anchoredAt: string | null;
+type PublicVerifyHttpResponse = Omit<PublicVerifyResult, 'timestampedAt'> & {
+  timestampedAt: string;
 };
 
 @Controller('public')
@@ -30,8 +30,9 @@ export class PublicVerifyController {
     return {
       status: result.status,
       documentId: result.documentId,
-      anchorTxHash: result.anchorTxHash,
-      anchoredAt: result.anchoredAt ? result.anchoredAt.toISOString() : null,
+      rootHex: result.rootHex,
+      batchId: result.batchId,
+      timestampedAt: result.timestampedAt.toISOString(),
     };
   }
 }
