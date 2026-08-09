@@ -43,7 +43,11 @@ export class NotaryService {
     await this.assertNotaryEnabled(opts.tenantId);
     const doc = await this.getDocOrThrow(opts.tenantId, opts.documentId);
 
-    if (doc.anchorStatus === 'ANCHORED' && doc.anchorTxHash && doc.anchoredAt) {
+    if (
+      doc.anchorStatus === 'ANCHORED' &&
+      doc.anchorBatchId &&
+      doc.anchoredAt
+    ) {
       return this.toRecordView(doc);
     }
 
@@ -52,9 +56,7 @@ export class NotaryService {
       return this.toRecordView(anchored.doc);
     } catch {
       doc.anchorStatus = 'PENDING';
-      doc.anchorTxHash = null;
       doc.anchoredAt = null;
-      doc.anchorChainId = null;
       await this.docsRepo.save(doc);
 
       return this.toRecordView(doc);
@@ -93,9 +95,7 @@ export class NotaryService {
     return {
       ...verification,
       notaryStatus: this.mapAnchorStatus(doc.anchorStatus),
-      provider: 'dummy-anchor',
-      providerRef: doc.anchorTxHash,
-      chainId: doc.anchorChainId,
+      provider: 'rfc3161-tsa',
     };
   }
 
@@ -132,8 +132,8 @@ export class NotaryService {
       documentId: doc.id,
       documentSha256: doc.sha256PlainHex,
       status: this.mapAnchorStatus(doc.anchorStatus),
-      provider: 'dummy-anchor',
-      providerRef: doc.anchorTxHash,
+      provider: 'rfc3161-tsa',
+      providerRef: doc.anchorBatchId,
       issuedAt: doc.anchoredAt ? doc.anchoredAt.toISOString() : null,
       verifiedAt: doc.anchoredAt ? doc.anchoredAt.toISOString() : null,
       failureReason:
