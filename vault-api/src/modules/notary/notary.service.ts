@@ -10,7 +10,7 @@ import { DocumentEntity } from '../../database/entities/document.entity';
 import { AnchorService } from '../anchor/anchor.service';
 import type { PublicNotaryVerification } from './types/public-notary-verification.type';
 
-export type NotaryStatus = 'PENDING' | 'ISSUED' | 'FAILED';
+export type NotaryStatus = 'PENDING' | 'ISSUED' | 'SIMULATED' | 'FAILED';
 
 export type NotaryRecordView = {
   id: string;
@@ -149,6 +149,7 @@ export class NotaryService {
     status: DocumentEntity['anchorStatus'],
   ): NotaryStatus {
     if (status === 'ANCHORED') return 'ISSUED';
+    if (status === 'SIMULATED') return 'SIMULATED';
     if (status === 'FAILED') return 'FAILED';
     return 'PENDING';
   }

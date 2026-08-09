@@ -24,18 +24,8 @@ const DocumentItemSchema = z.object({
   createdAt: z.string(),
 });
 
-const PublicVerifyResponseSchema = z.object({
-  status: z.enum(['VALID', 'MODIFIED', 'NOT_ANCHORED']),
-  documentId: z.string().uuid(),
-  storedSha256: z.string(),
-  currentSha256: z.string(),
-  anchorTxHash: z.string().nullable(),
-  anchoredAt: z.string().nullable(),
-});
-
 type VaultResponse = z.infer<typeof VaultResponseSchema>;
 type DocumentItem = z.infer<typeof DocumentItemSchema>;
-type PublicVerifyResponse = z.infer<typeof PublicVerifyResponseSchema>;
 
 describe('Public Verify e2e', () => {
   let app: INestApplication;
@@ -109,18 +99,10 @@ describe('Public Verify e2e', () => {
     if (app) await app.close();
   });
 
-  it('returns NOT_ANCHORED initially', async () => {
-    const res = await http(app)
-      .get(`/public/verify?documentId=${documentId}`)
-      .expect(200);
-
-    const body: PublicVerifyResponse = PublicVerifyResponseSchema.parse(
-      res.body as unknown,
-    );
-
-    expect(body.status).toBe('NOT_ANCHORED');
-    expect(body.documentId).toBe(documentId);
-    expect(body.anchorTxHash).toBeNull();
-    expect(body.anchoredAt).toBeNull();
+  it('rejects public verification when the document has no on-chain proof', async () => {
+    // A freshly uploaded document is not anchored (and the dev backend only
+    // simulates anchoring), so there is no public proof to serve. The endpoint
+    // must refuse rather than present a fake or empty proof record.
+    await http(app).get(`/public/verify?documentId=${documentId}`).expect(404);
   });
 });

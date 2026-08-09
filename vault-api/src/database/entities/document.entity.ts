@@ -75,7 +75,7 @@ export class DocumentEntity {
     name: 'anchor_status',
     default: 'PENDING',
   })
-  anchorStatus!: 'PENDING' | 'ANCHORED' | 'FAILED';
+  anchorStatus!: 'PENDING' | 'ANCHORED' | 'SIMULATED' | 'FAILED';
 
   @Column({
     type: 'varchar',

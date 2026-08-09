@@ -1,6 +1,6 @@
 export type PublicNotaryVerification = {
   status: 'VALID' | 'MODIFIED' | 'NOT_ANCHORED';
-  notaryStatus: 'PENDING' | 'ISSUED' | 'FAILED';
+  notaryStatus: 'PENDING' | 'ISSUED' | 'SIMULATED' | 'FAILED';
   documentId: string;
   provider: string;
   providerRef: string | null;

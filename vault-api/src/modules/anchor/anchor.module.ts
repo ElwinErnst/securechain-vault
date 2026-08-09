@@ -6,17 +6,19 @@ import { StorageModule } from 'src/common/modules/storage/storage.module';
 
 import { AnchorService, ANCHOR_CLIENT } from './anchor.service';
 import { PublicVerifyController } from './public-verify.controller';
-import type { AnchorClientPort } from './ports/anchor-client.port';
+import type {
+  AnchorClientPort,
+  AnchorResult,
+} from './ports/anchor-client.port';
 
-// Cliente dummy para MVP (hasta que conectemos contrato real)
+// Simulated client for the MVP (until a real anchoring backend is wired in).
+// It performs NO on-chain transaction, so it never returns a tx hash: callers
+// must treat the result as unproven and never present it as blockchain proof.
 class DummyAnchorClient implements AnchorClientPort {
-  anchorDocumentHash(): Promise<{
-    txHash: string;
-    chainId: number;
-    anchoredAt: Date;
-  }> {
+  anchorDocumentHash(): Promise<AnchorResult> {
     return Promise.resolve({
-      txHash: '0xDUMMY',
+      simulated: true,
+      txHash: null,
       chainId: 31337,
       anchoredAt: new Date(),
     });
