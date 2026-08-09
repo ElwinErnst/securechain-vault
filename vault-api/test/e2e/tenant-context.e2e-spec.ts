@@ -1,6 +1,8 @@
 import { INestApplication, Controller, Get, UseGuards } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
+import { AuthDirectoryService } from '../../src/common/modules/auth-directory/auth-directory.service';
+import { createFakeAuthDirectory } from '../utils/auth-directory.fake';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
@@ -28,7 +30,10 @@ describe('Tenant context hard-fail e2e', () => {
     const modRef = await Test.createTestingModule({
       imports: [AppModule],
       controllers: [TenantProbeController],
-    }).compile();
+    })
+      .overrideProvider(AuthDirectoryService)
+      .useValue(createFakeAuthDirectory())
+      .compile();
 
     app = modRef.createNestApplication();
     await app.init();
@@ -44,7 +49,7 @@ describe('Tenant context hard-fail e2e', () => {
   });
 
   it('fails if ZT headers are missing', async () => {
-    await http(app).get('/__tenant/probe').expect(403);
+    await http(app).get('/__tenant/probe').expect(401);
   });
 
   it('passes with signed ZT tenant context', async () => {

@@ -3,6 +3,8 @@ import { Test } from '@nestjs/testing';
 import { z } from 'zod';
 
 import { AppModule } from '../../src/app.module';
+import { AuthDirectoryService } from '../../src/common/modules/auth-directory/auth-directory.service';
+import { createFakeAuthDirectory } from '../utils/auth-directory.fake';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase } from '../utils/db';
@@ -40,7 +42,10 @@ describe('Public Verify e2e', () => {
 
     const mod = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AuthDirectoryService)
+      .useValue(createFakeAuthDirectory())
+      .compile();
 
     app = mod.createNestApplication();
     await app.init();

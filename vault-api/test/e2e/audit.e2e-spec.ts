@@ -3,6 +3,8 @@ import { Test } from '@nestjs/testing';
 import { z } from 'zod';
 
 import { AppModule } from '../../src/app.module';
+import { AuthDirectoryService } from '../../src/common/modules/auth-directory/auth-directory.service';
+import { createFakeAuthDirectory } from '../utils/auth-directory.fake';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase, withDb } from '../utils/db';
@@ -124,7 +126,10 @@ describe('Audit e2e', () => {
     // ✅ IMPORTANT: boot Nest/TypeORM first (tables/migrations), then reset/seed
     const modRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AuthDirectoryService)
+      .useValue(createFakeAuthDirectory())
+      .compile();
 
     app = modRef.createNestApplication();
     await app.init();
@@ -164,32 +169,32 @@ describe('Audit e2e', () => {
 
     const row = await getAuditByAction(action);
     expect(row).toBeTruthy();
-    expect(row!.metadata).toEqual({
+    expect(row.metadata).toEqual({
       date: '2026-07-01T12:03:00.000Z',
       values: [null, null, 0],
     });
-    expect(row!.schema_version).toBe(CURRENT_SCHEMA_VERSION);
+    expect(row.schema_version).toBe(CURRENT_SCHEMA_VERSION);
 
-    const serializer = getAuditSerializer(row!.schema_version)!;
+    const serializer = getAuditSerializer(row.schema_version)!;
     const expected = serializer.computeEventHash({
-      id: row!.id,
-      createdAt: row!.created_at,
-      scope: row!.scope,
-      seq: row!.seq,
-      tenantId: row!.tenant_id,
-      userId: row!.user_id,
-      action: row!.action,
-      resourceType: row!.resource_type,
-      resourceId: row!.resource_id,
-      outcome: row!.outcome,
-      httpStatus: row!.http_status,
-      httpMethod: row!.http_method,
-      httpPath: row!.http_path,
-      ip: row!.ip,
-      userAgent: row!.user_agent,
-      metadata: row!.metadata,
+      id: row.id,
+      createdAt: row.created_at,
+      scope: row.scope,
+      seq: row.seq,
+      tenantId: row.tenant_id,
+      userId: row.user_id,
+      action: row.action,
+      resourceType: row.resource_type,
+      resourceId: row.resource_id,
+      outcome: row.outcome,
+      httpStatus: row.http_status,
+      httpMethod: row.http_method,
+      httpPath: row.http_path,
+      ip: row.ip,
+      userAgent: row.user_agent,
+      metadata: row.metadata,
     });
-    expect(row!.event_hash).toBe(expected);
+    expect(row.event_hash).toBe(expected);
   });
 
   it.each([

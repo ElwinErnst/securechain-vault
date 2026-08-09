@@ -1,8 +1,8 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
@@ -42,7 +42,9 @@ export class JwtAuthGuard implements CanActivate {
     });
 
     if (!result.ok) {
-      throw new ForbiddenException(
+      // Missing/invalid authentication is a 401, not a 403 (which is for an
+      // authenticated caller lacking permission).
+      throw new UnauthorizedException(
         `ZT: ${'reason' in result ? result.reason : 'verification failed'}`,
       );
     }

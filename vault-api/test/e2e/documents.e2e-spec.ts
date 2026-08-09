@@ -4,6 +4,8 @@ import { z } from 'zod';
 import type { Response as SuperAgentResponse } from 'superagent';
 
 import { AppModule } from '../../src/app.module';
+import { AuthDirectoryService } from '../../src/common/modules/auth-directory/auth-directory.service';
+import { createFakeAuthDirectory } from '../utils/auth-directory.fake';
 import { loadTestEnv } from '../utils/test-env';
 import { http } from '../utils/http';
 import { resetDb, seedBase, withDb } from '../utils/db';
@@ -111,7 +113,10 @@ describe('Documents e2e', () => {
 
     const modRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(AuthDirectoryService)
+      .useValue(createFakeAuthDirectory())
+      .compile();
 
     app = modRef.createNestApplication();
     await app.init();
