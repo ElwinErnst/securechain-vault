@@ -3,7 +3,7 @@ import { Logger } from '@nestjs/common';
 import type {
   TimestampClientPort,
   TimestampResult,
-} from './ports/timestamp-client.port';
+} from './timestamp-client.port';
 import { buildTimeStampRequest, parseTimeStampResponse } from './rfc3161';
 
 /**

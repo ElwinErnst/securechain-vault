@@ -10,8 +10,8 @@ import { AnchorService } from './anchor.service';
 import type {
   TimestampClientPort,
   TimestampResult,
-} from './ports/timestamp-client.port';
-import type { TimestampVerifierPort } from './ports/timestamp-verifier.port';
+} from '../../common/modules/timestamp/timestamp-client.port';
+import type { TimestampVerifierPort } from '../../common/modules/timestamp/timestamp-verifier.port';
 import { buildMerkleTree } from './merkle.util';
 
 /**
