@@ -8,7 +8,7 @@ import { TSTInfo } from '@peculiar/asn1-tsp';
 import type {
   TimestampVerifierPort,
   TokenVerification,
-} from './ports/timestamp-verifier.port';
+} from './timestamp-verifier.port';
 
 // pkijs needs a crypto engine. Node's WebCrypto provides one.
 pkijs.setEngine(

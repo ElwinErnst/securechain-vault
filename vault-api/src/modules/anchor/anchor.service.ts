@@ -11,11 +11,11 @@ import type { PublicVerifyResult } from './types/public-verify-result.type';
 import {
   TIMESTAMP_CLIENT,
   type TimestampClientPort,
-} from './ports/timestamp-client.port';
+} from '../../common/modules/timestamp/timestamp-client.port';
 import {
   TIMESTAMP_VERIFIER,
   type TimestampVerifierPort,
-} from './ports/timestamp-verifier.port';
+} from '../../common/modules/timestamp/timestamp-verifier.port';
 import { buildMerkleTree, verifyMerkleProof } from './merkle.util';
 
 /** Upper bound on how many documents go into one Merkle batch per run. */

@@ -13,7 +13,7 @@ import { TenantRbacGuard } from '../../common/guards/tenant-rbac.guard';
 import { TenantRoles } from '../../common/decorators/tenant-roles.decorator';
 import { TenantId } from '../../common/decorators/tenant-id.decorator';
 import { AuditReaderService } from './audit-reader.service';
-import { AuditVerifierService } from './audit-verifier.service';
+import { AuditCheckpointService } from './audit-checkpoint.service';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { TenantMemberRole } from 'src/database/entities/tenant-member.entity';
 
@@ -22,7 +22,7 @@ import { TenantMemberRole } from 'src/database/entities/tenant-member.entity';
 export class AuditTenantController {
   constructor(
     private readonly reader: AuditReaderService,
-    private readonly verifier: AuditVerifierService,
+    private readonly checkpoints: AuditCheckpointService,
   ) {}
 
   @Get()
@@ -43,6 +43,6 @@ export class AuditTenantController {
   @Get('verify')
   @TenantRoles(TenantMemberRole.OWNER, TenantMemberRole.ADMIN)
   async verify(@TenantId() tenantId: string) {
-    return this.verifier.verifyScope(tenantId);
+    return this.checkpoints.verifyScopeAnchored(tenantId);
   }
 }

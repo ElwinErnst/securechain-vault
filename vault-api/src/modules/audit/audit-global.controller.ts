@@ -9,7 +9,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { AuditReaderService } from './audit-reader.service';
-import { AuditVerifierService } from './audit-verifier.service';
+import { AuditCheckpointService } from './audit-checkpoint.service';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { Roles } from 'src/common/decorators/roles.decorator';
 import { RoleName } from 'src/database/entities/role.entity';
@@ -19,7 +19,7 @@ import { RoleName } from 'src/database/entities/role.entity';
 export class AuditGlobalController {
   constructor(
     private readonly reader: AuditReaderService,
-    private readonly verifier: AuditVerifierService,
+    private readonly checkpoints: AuditCheckpointService,
   ) {}
 
   @Get()
@@ -41,6 +41,6 @@ export class AuditGlobalController {
   @Get('verify')
   @Roles(RoleName.AUDITOR, RoleName.ADMIN)
   verify(@Query('scope', new DefaultValuePipe('GLOBAL')) scope: string) {
-    return this.verifier.verifyScope(scope);
+    return this.checkpoints.verifyScopeAnchored(scope);
   }
 }

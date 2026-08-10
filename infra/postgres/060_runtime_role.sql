@@ -12,6 +12,9 @@ SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA publ
 \gexec
 SELECT format('REVOKE UPDATE, DELETE, TRUNCATE ON audit_logs FROM %I', :'app_user')
 \gexec
+-- audit_checkpoints are proof records: append-only at runtime, like audit_logs.
+SELECT format('REVOKE UPDATE, DELETE, TRUNCATE ON audit_checkpoints FROM %I', :'app_user')
+\gexec
 SELECT format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I', :'app_user')
 \gexec
 SELECT format('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', :'app_user')
