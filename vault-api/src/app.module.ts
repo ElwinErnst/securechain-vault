@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 
 import databaseConfig from './config/database.config';
 import storageConfig from './config/storage.config';
@@ -10,7 +11,7 @@ import ztConfig from './config/zt.config';
 import authDirectoryConfig from './config/auth-directory.config';
 import { TenantsModule } from './modules/tenants/tenants.module';
 import { VaultsModule } from './modules/vaults/vaults.module';
-import { APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 import { AuditInterceptor } from './common/interceptors/audit.interceptor';
 import { AuditModule } from './modules/audit/audit.module';
 import { DocumentsModule } from './modules/documents/documents.module';
@@ -41,6 +42,15 @@ import { NotaryModule } from './modules/notary/notary.module';
 
     ScheduleModule.forRoot(),
 
+    // Per-IP rate limiting. Generous defaults (300 req/min) — enough for normal
+    // use, low enough to blunt brute-force/scraping. Tunable via env.
+    ThrottlerModule.forRoot([
+      {
+        ttl: Number(process.env.THROTTLE_TTL_MS ?? 60_000),
+        limit: Number(process.env.THROTTLE_LIMIT ?? 300),
+      },
+    ]),
+
     TenantsModule,
     VaultsModule,
     AuditModule,
@@ -50,6 +60,9 @@ import { NotaryModule } from './modules/notary/notary.module';
     NotaryModule,
     AuthDirectoryModule,
   ],
-  providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
+  providers: [
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}
