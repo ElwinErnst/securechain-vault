@@ -7,6 +7,7 @@ import { StorageModule } from 'src/common/modules/storage/storage.module';
 import { TimestampModule } from 'src/common/modules/timestamp/timestamp.module';
 
 import { AnchorService } from './anchor.service';
+import { DocumentAnchorCron } from './document-anchor.cron';
 import { PublicVerifyController } from './public-verify.controller';
 
 @Module({
@@ -16,7 +17,7 @@ import { PublicVerifyController } from './public-verify.controller';
     TimestampModule,
   ],
   controllers: [PublicVerifyController],
-  providers: [AnchorService],
+  providers: [AnchorService, DocumentAnchorCron],
   exports: [AnchorService],
 })
 export class AnchorModule {}
