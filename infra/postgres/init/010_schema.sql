@@ -93,9 +93,7 @@ CREATE TABLE IF NOT EXISTS documents (
   sha256_plain_hex char(64) NOT NULL,
   sha256_cipher_hex char(64) NULL,
   anchor_status varchar(20) NOT NULL DEFAULT 'PENDING',
-  anchor_tx_hash varchar(120) NULL,
   anchored_at timestamptz NULL,
-  anchor_chain_id int NULL,
   anchor_retries int NOT NULL DEFAULT 0
 );
 

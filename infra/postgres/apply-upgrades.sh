@@ -14,6 +14,7 @@ psql -v ON_ERROR_STOP=1 -f "$base/init/040_audit_schema_version.sql"
 psql -v ON_ERROR_STOP=1 -f "$base/init/050_audit_append_only.sql"
 psql -v ON_ERROR_STOP=1 -f "$base/init/055_anchor_merkle.sql"
 psql -v ON_ERROR_STOP=1 -f "$base/init/056_audit_checkpoints.sql"
+psql -v ON_ERROR_STOP=1 -f "$base/init/057_drop_legacy_anchor_columns.sql"
 psql -v ON_ERROR_STOP=1 \
   --set=app_user="$APP_DB_USER" \
   --set=app_password="$APP_DB_PASSWORD" \

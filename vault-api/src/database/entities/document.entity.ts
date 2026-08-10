@@ -79,19 +79,8 @@ export class DocumentEntity {
   })
   anchorStatus!: 'PENDING' | 'ANCHORED' | 'SIMULATED' | 'FAILED';
 
-  @Column({
-    type: 'varchar',
-    length: 120,
-    name: 'anchor_tx_hash',
-    nullable: true,
-  })
-  anchorTxHash!: string | null;
-
   @Column({ type: 'timestamptz', name: 'anchored_at', nullable: true })
   anchoredAt!: Date | null;
-
-  @Column({ type: 'int', name: 'anchor_chain_id', nullable: true })
-  anchorChainId!: number | null;
 
   @Column({
     type: 'int',
