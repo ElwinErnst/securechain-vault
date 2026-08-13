@@ -7,20 +7,23 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { verifyZtRequest } from '../zt/zt-verify';
+import { ReplayNonceService } from '../replay/replay-nonce.service';
 import type { AuthUser } from '../types/auth-user.type';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   private readonly secret: string;
   private readonly maxSkewMs: number;
-  private readonly replayCache = new Map<string, number>();
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly replay: ReplayNonceService,
+  ) {
     this.secret = config.getOrThrow<string>('zt.hmacSecret');
     this.maxSkewMs = config.get<number>('zt.maxClockSkewMs') ?? 30_000;
   }
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<
       Request & {
         user?: AuthUser;
@@ -38,7 +41,6 @@ export class JwtAuthGuard implements CanActivate {
       query: queryPart ?? '',
       headers: req.headers,
       maxSkewMs: this.maxSkewMs,
-      replayCache: this.replayCache,
     });
 
     if (!result.ok) {
@@ -47,6 +49,14 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException(
         `ZT: ${'reason' in result ? result.reason : 'verification failed'}`,
       );
+    }
+
+    // Signature is verified; now atomically record the nonce. A false return
+    // means the key already existed → replay.
+    const expiresAt = new Date(Date.now() + this.maxSkewMs);
+    const fresh = await this.replay.checkAndRecord(result.replayKey, expiresAt);
+    if (!fresh) {
+      throw new UnauthorizedException('ZT: Replay detected');
     }
 
     req.user = {

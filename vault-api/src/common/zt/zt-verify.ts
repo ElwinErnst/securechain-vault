@@ -5,7 +5,13 @@ type HeaderValue = string | string[] | undefined;
 type HeadersMap = Readonly<Record<string, HeaderValue>>;
 
 export type ZtVerifyResult =
-  | { ok: true; userId: string; tenantId: string; roles: string[] }
+  | {
+      ok: true;
+      userId: string;
+      tenantId: string;
+      roles: string[];
+      replayKey: string;
+    }
   | { ok: false; reason: string };
 
 function safeEq(a: string, b: string): boolean {
@@ -27,18 +33,6 @@ function getHeader(headers: HeadersMap, key: string): string | null {
   return null;
 }
 
-function evictExpiredReplayEntries(
-  replayCache: Map<string, number>,
-  now: number,
-  maxSkewMs: number,
-) {
-  for (const [key, seenAt] of replayCache.entries()) {
-    if (now - seenAt > maxSkewMs) {
-      replayCache.delete(key);
-    }
-  }
-}
-
 export function verifyZtRequest(input: {
   secret: string;
   method: string;
@@ -46,10 +40,8 @@ export function verifyZtRequest(input: {
   query: string;
   headers: HeadersMap;
   maxSkewMs: number;
-  replayCache: Map<string, number>;
 }): ZtVerifyResult {
-  const { secret, method, path, query, headers, maxSkewMs, replayCache } =
-    input;
+  const { secret, method, path, query, headers, maxSkewMs } = input;
 
   const version = getHeader(headers, 'x-zt-v');
   if (version !== '1') return { ok: false, reason: 'Invalid version' };
@@ -78,14 +70,8 @@ export function verifyZtRequest(input: {
   if (!Number.isFinite(ts)) return { ok: false, reason: 'Invalid timestamp' };
 
   const now = Date.now();
-  evictExpiredReplayEntries(replayCache, now, maxSkewMs);
   if (Math.abs(now - ts) > maxSkewMs) {
     return { ok: false, reason: 'Timestamp outside allowed window' };
-  }
-
-  const replayKey = `${userId}:${nonce}`;
-  if (replayCache.has(replayKey)) {
-    return { ok: false, reason: 'Replay detected' };
   }
 
   const canonical = canonicalizeZt({
@@ -106,8 +92,8 @@ export function verifyZtRequest(input: {
     return { ok: false, reason: 'Invalid signature' };
   }
 
-  replayCache.set(replayKey, now);
-
+  // Replay persistence is the caller's responsibility (it needs async I/O):
+  // the signature is verified here, and the caller atomically records the key.
   return {
     ok: true,
     userId,
@@ -116,5 +102,6 @@ export function verifyZtRequest(input: {
       .split(',')
       .map((role) => role.trim())
       .filter(Boolean),
+    replayKey: `${userId}:${nonce}`,
   };
 }
