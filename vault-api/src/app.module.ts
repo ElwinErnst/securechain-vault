@@ -19,6 +19,7 @@ import { AccessControlModule } from './common/modules/access-control/access-cont
 import { AnchorModule } from './modules/anchor/anchor.module';
 import { AuthDirectoryModule } from './common/modules/auth-directory/auth-directory.module';
 import { NotaryModule } from './modules/notary/notary.module';
+import { ReplayModule } from './common/replay/replay.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { NotaryModule } from './modules/notary/notary.module';
     }),
 
     ScheduleModule.forRoot(),
+    ReplayModule,
 
     // Per-IP rate limiting. Generous defaults (300 req/min) — enough for normal
     // use, low enough to blunt brute-force/scraping. Tunable via env.
