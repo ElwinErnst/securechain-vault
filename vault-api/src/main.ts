@@ -5,7 +5,9 @@ import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody exposes the exact request bytes so the ZT guard can bind the body
+  // hash for parsed content types (JSON). Multipart uploads stay streamed.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Security headers (HSTS, X-Content-Type-Options, frameguard, etc.).
   app.use(helmet());
