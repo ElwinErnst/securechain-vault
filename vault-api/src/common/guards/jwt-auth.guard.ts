@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { verifyZtRequest } from '../zt/zt-verify';
+import { loadPublicKeyring, type PublicKeyring } from '../zt/keyring';
 import { ReplayNonceService } from '../replay/replay-nonce.service';
 import type { AuthUser } from '../types/auth-user.type';
 
@@ -14,6 +15,8 @@ import type { AuthUser } from '../types/auth-user.type';
 export class JwtAuthGuard implements CanActivate {
   private readonly secret: string;
   private readonly maxSkewMs: number;
+  private readonly keyring: PublicKeyring;
+  private readonly acceptV1Hmac: boolean;
 
   constructor(
     config: ConfigService,
@@ -21,11 +24,14 @@ export class JwtAuthGuard implements CanActivate {
   ) {
     this.secret = config.getOrThrow<string>('zt.hmacSecret');
     this.maxSkewMs = config.get<number>('zt.maxClockSkewMs') ?? 30_000;
+    this.keyring = loadPublicKeyring(config.get<string>('zt.verifyPublicKeys'));
+    this.acceptV1Hmac = config.get<boolean>('zt.acceptV1Hmac') ?? true;
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<
       Request & {
+        rawBody?: Buffer;
         user?: AuthUser;
         tenantContext?: { tenantId: string };
       }
@@ -35,12 +41,17 @@ export class JwtAuthGuard implements CanActivate {
     const [path, queryPart] = originalUrl.split('?');
 
     const result = verifyZtRequest({
-      secret: this.secret,
+      hmacSecret: this.secret,
+      keyring: this.keyring,
+      acceptV1Hmac: this.acceptV1Hmac,
       method: req.method,
       path: path ?? '/',
       query: queryPart ?? '',
       headers: req.headers,
       maxSkewMs: this.maxSkewMs,
+      // Raw bytes are present for parsed content types (JSON); streamed
+      // multipart uploads leave this undefined and skip body-hash binding.
+      body: req.rawBody,
     });
 
     if (!result.ok) {
