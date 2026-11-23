@@ -9,7 +9,11 @@ export const AppDataSource = new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   entities: [__dirname + '/../**/*.entity.{ts,js}'],
-  synchronize: true,
+  // Schema is owned by the SQL init scripts in infra/postgres/init (and applied
+  // via apply-upgrades.sh), never by TypeORM. This CLI data source is used by
+  // the seed script, which must read/write existing tables without mutating the
+  // schema. Keep it false to match the runtime config (synchronize only in test).
+  synchronize: false,
   migrations: [],
   logging: true,
 });
